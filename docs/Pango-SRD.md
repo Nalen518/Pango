@@ -4,6 +4,11 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — spike S4 findings**
+
+- FR-A4: errors decoded from the vault ABI plus bubbled OpenZeppelin v5 and B20 errors; proof-mode broadcast only after a chain-id check for Base Sepolia, with an explicit gas limit.
+- NFR-12: gas budget counted in gas units; post-swap reverts cost close to a full buy, so proof-mode sends use a 400k gas limit and the daily budget is sized from S5's measured buy gas.
+
 **Nov 16, 2026 — spike S2 findings**
 
 - Invariant test (section 8) now excludes issuer seizure and policy freezes, which no holder contract can prevent.
@@ -194,7 +199,7 @@ Four components carry the product: the vault enforces, the agent proposes and ex
 | FR-A1 | Accept input from three channels: chat command, news item (RSS or pasted), attack-console preset. | US-07, US-13 |
 | FR-A2 | An LLM with tools proposes a trade (stock, side, amount) and a one-paragraph rationale. The LLM never holds keys and never decides whether a trade is safe. | US-07 |
 | FR-A3 | Fact-check: for any split or dividend claim, read the test token's pending multiplier update on Base Sepolia and label the claim verified or unverified. | US-12 |
-| FR-A4 | Executor: preflight with `eth_call` to decode any custom error, then broadcast. In proof mode (testnet only) a failing trade is still broadcast so the revert is visible on Basescan. | US-06, US-13 |
+| FR-A4 | Executor: preflight with `eth_call`, then broadcast. Reverts are decoded against one error table built from the PangoVault ABI **plus** the errors that can bubble up from other contracts: OpenZeppelin v5 (`OwnableUnauthorizedAccount`, `EnforcedPause`, `ReentrancyGuardReentrantCall`, `SafeERC20FailedOperation`) and B20 (`PolicyForbids`, `AccountNotSeizable`, `ContractPaused`, and the rest of `IB20` / `IB20Asset`); anything else is shown as "unknown error 0x…" with the raw selector. In proof mode a failing trade is still broadcast so the revert is visible on Basescan: the executor first checks `eth_chainId == 84532` (Base Sepolia only, otherwise it refuses), then sends with an explicit gas limit, which skips `estimate_gas` (that is what refuses a reverting call). Proven in spike S4. | US-06, US-13 |
 | FR-A5 | Sign with a dedicated agent key held by the service (env secret), funded with Sepolia ETH for gas only. Stretch: Bankr wallet as signer. | US-07 |
 | FR-A6 | Store every attempt (input, proposal, preflight result, tx hash, error) in a log table and serve it to the UI. | US-06 |
 | FR-A10 | Append Pango's Builder Code (ERC-8021 suffix) to every agent transaction and every owner transaction sent from the web app, so all Pango activity is attributed onchain. | G4 |
@@ -368,7 +373,7 @@ The bar is: a stolen agent key or a fooled model can lose nothing outside the ma
 | NFR-9 | Verifiability | All contracts verified on sepolia.basescan.org; repo public with README and deployed addresses. |
 | NFR-10 | Usability | Every error shown with its plain-English reason (section 5); mascot pose readable without text. |
 | NFR-11 | Compliance | App states: test network only, not financial advice; Coinbase tokenized stocks are for eligible non-US persons. |
-| NFR-12 | Abuse | Public chat and attack console are rate-limited (e.g. 1 attack per 30 s per IP, daily gas budget for the agent key); when the budget is hit the console shows preflight results only, labelled "simulated". |
+| NFR-12 | Abuse | Public chat and attack console are rate-limited (e.g. 1 attack per 30 s per IP, daily gas budget for the agent key); when the budget is hit the console shows preflight results only, labelled "simulated". The budget is counted in gas units, not transactions: a revert at the top of `buy` costs ~22k gas (spike S4), but `AboveFairValue`, `ExceedsShareCap` and `OvershootsTarget` revert after the swap and cost close to a full buy (target under 300k, spike S5). Proof-mode sends use a fixed gas limit of 400k; the daily budget (e.g. 50 proof reverts ≈ 20M gas) and the agent key's Sepolia ETH are sized from the measured gas of a full buy once S5 reports it. |
 | NFR-13 | Operations | Agent runs on Railway as exactly one instance with one worker and no sleep/scale-to-zero, so only one rebalance loop exists (protects NFR-7). The web app reads the log only through the agent API, never the database directly. Agent key lives only in Railway env vars. Service, database and the agent key's Sepolia ETH stay funded through the judging period after Dec 5. |
 
 ## 7. Testnet deployment plan (Base Sepolia)
