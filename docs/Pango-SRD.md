@@ -4,6 +4,14 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — gap review**
+
+- Spike S3 also checks whether a contract may hold real NVDA (policy registry) and reads real corporate-action lead times; dividend threshold `minMultiplierChangeBps` is only a fallback, default stays "block every pending update" (US-09).
+- New FR-W10 mainnet shadow panel: read-only, no wallet, no transactions; uses a separate config the signer never loads (FR-A9). All demo trades stay on Base Sepolia.
+- Research is deterministic: a fixed, versioned scoring function over a recorded signal snapshot sets the weights; the LLM only explains them; the hashed report lets anyone recompute the weights (US-16, US-19, FR-A7, AT-14).
+- Sell side tightened: `dailySellCapUsd` with `ExceedsDailySellCap`, `setTargets` cooldown with `TargetsCooldown`; NFR-3 worst case updated and notes the fair-value rule also blocks sandwich attacks.
+- Hosting decided: agent on Railway (one instance, one worker, never asleep), Railway Postgres for the log via `DATABASE_URL` (new NFR-13).
+
 **Nov 16, 2026 — review pass**
 
 - Target check (FR-V13, section 5) is skipped until targets are first set, so AT-02's first buy no longer reverts `OvershootsTarget`.
@@ -19,7 +27,7 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 Pango is a research-to-portfolio agent for tokenized stocks: it turns research into a target portfolio and keeps it rebalanced, while PangoVault, a smart contract on Base, guarantees every trade happens at fair value, never through a stock split, and inside the owner's limits — even when the AI is tricked or its key is stolen. This SRD defines what we build for Base Stocks Maxxing (Agentic Stock Finance track) and how we prove it works on Base Sepolia before the Dec 5, 2026 deadline.
 
-**Promise:** A stock portfolio agent that can't overpay, trade through a stock split, or drift outside the portfolio you approved — even when it's tricked.
+**Promise:** A stock portfolio agent that can't overpay, trade through a stock split, or drift outside the portfolio you approved — even when it's tricked. Because every trade must land at fair value, the same rule also blocks sandwich attacks and bad slippage.
 
 **Mascot:** a trenggiling (pangolin) that curls up when a trade is blocked; its pose always mirrors the contract's state.
 
@@ -78,7 +86,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 | --- | --- | --- |
 | US-07 | As the agent, I buy a stock within the mandate. | Given price within band, fresh feed, no pending corporate action and caps not hit, `buy` executes and emits `TradeExecuted`. |
 | US-08 | As the agent, I am stopped from paying above fair value. | If the swap delivers fewer tokens than the oracle-based minimum, the call reverts `AboveFairValue(paidPrice, maxPrice)`. Same for selling below fair value: `BelowFairValue`. |
-| US-09 | As the agent, I am stopped from trading through a corporate action. | While the stock has a scheduled multiplier update not yet effective, `buy` and `sell` revert `CorporateActionPending(effectiveAt)`. |
+| US-09 | As the agent, I am stopped from trading through a corporate action. | While the stock has a scheduled multiplier update not yet effective, `buy` and `sell` revert `CorporateActionPending(effectiveAt)`. Default: every pending update blocks. Only if spike S3 shows real pending windows longer than a day, the owner may set `minMultiplierChangeBps` so smaller (dividend) adjustments don't block. |
 | US-10 | As the agent, I am held to a tighter band when the price is stale. | Feed older than `maxStaleness` uses `staleBandBps`; older than `hardStaleLimit` reverts `StaleOracle`. |
 | US-11 | As the agent, I cannot exceed share, per-trade or daily caps, or trade unlisted tokens. | Reverts `ExceedsShareCap`, `ExceedsPerTradeCap`, `ExceedsDailyCap`, `TokenNotAllowed` respectively; daily cap resets at 00:00 UTC. |
 | US-12 | As the agent, I fact-check stock news against the chain before acting. | For a split or dividend claim, the agent reads the token's pending multiplier update and reports "verified onchain" or "unverified" with the evidence. |
@@ -95,10 +103,10 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 | ID | Story | Acceptance criteria |
 | --- | --- | --- |
 | US-15 | As an owner, I set a minimum and maximum weight per stock, a tolerance and a drift trigger, so the agent's portfolio stays inside my comfort zone. | Owner stores `minWeightBps`, `maxWeightBps` per stock and `toleranceBps`, `driftTriggerBps` for the vault; only the owner can change them; emits `MandateUpdated`. |
-| US-16 | As the agent, I turn research into target weights and commit them onchain. | The agent writes a short thesis per stock from news and token data, proposes weights, and calls `setTargets(tokens, weightsBps, researchHash)`; the vault stores them and emits `TargetsSet`. |
+| US-16 | As the agent, I turn research into target weights and commit them onchain. | The agent records a signal snapshot per stock (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp), a fixed scoring function turns it into weights, the LLM writes the thesis explaining them, and the agent calls `setTargets(tokens, weightsBps, researchHash)`; the vault stores them and emits `TargetsSet`. |
 | US-17 | As the agent, I rebalance when the portfolio drifts. | When any stock's weight differs from its target by more than `driftTriggerBps` (absolute percentage points of portfolio weight), the agent buys or sells until it is within `toleranceBps`; every trade still passes all section 5 checks. |
 | US-18 | As the agent, I cannot rewrite the portfolio outside the owner's bounds or overshoot my own targets. | A target outside `[minWeightBps, maxWeightBps]` or summing over 100% reverts `TargetOutOfBounds`; a trade that pushes a stock past target ± tolerance reverts `OvershootsTarget`. |
-| US-19 | As an owner, I can read the research behind the current targets and check it was not changed afterwards. | The app shows the research report next to the targets; its keccak256 hash matches the `researchHash` stored onchain. |
+| US-19 | As an owner, I can read the research behind the current targets and check it was not changed afterwards. | The app shows the research report next to the targets; its keccak256 hash matches the `researchHash` stored onchain; re-running the scoring function on the report's signal snapshot reproduces the same weights. |
 
 ## 3. System architecture
 
@@ -150,7 +158,8 @@ If the agent is fooled or its key leaks, the worst it can do is a trade the vaul
 | Contracts | Solidity, base-forge, OpenZeppelin, base-std |
 | Agent | Python, FastAPI, web3.py, an LLM with tool calling |
 | Web | Next.js, wagmi/viem, hosted on Vercel |
-| Log store | SQLite for the hackathon; Supabase if hosted |
+| Log store | SQLite locally, Railway Postgres when hosted, chosen by `DATABASE_URL` |
+| Hosting | Agent on Railway; web on Vercel |
 | Networks | base-anvil (local) and Base Sepolia; the demo runs on Base Sepolia only |
 
 ## 4. Functional requirements
@@ -215,11 +224,12 @@ The pose is computed from chain reads and the last attempt, never from the LLM.
 | FR-V11 | Agent-only `setTargets(tokens, weightsBps, researchHash)`: each weight within owner bounds, total ≤ 10,000 bps (rest stays in USDC); configured stocks left out of the call get target 0 (and revert `TargetOutOfBounds` if their `minWeightBps` > 0); `researchHash` must be non-zero; stores targets and hash; emits `TargetsSet`. | US-16, US-18 |
 | FR-V12 | Portfolio valuation in the contract: value = USDC + Σ `balanceOfUI` × feed price (feed = price per UI share, so the multiplier is never applied twice); `weightOf(token)` view. | US-17 |
 | FR-V13 | After every trade, the traded stock's weight must stay within target ± `toleranceBps` in the direction of the trade, else revert `OvershootsTarget`. The check is skipped until `setTargets` has been called at least once, so the vault is usable before research runs. | US-17, US-18 |
-| FR-A7 | Research step: collect news (OpenClaw-style feed), token metadata and feed history; the LLM writes a thesis per stock and proposes weights; the report is stored and its keccak256 hash sent onchain. | US-16, US-19 |
+| FR-A7 | Research step: collect news (OpenClaw-style feed), token metadata and feed history into a signal snapshot (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp). A fixed, versioned scoring function, not the LLM, turns the snapshot into weights clamped to owner bounds; the LLM only writes the thesis explaining them and cites the snapshot's sources. The report (snapshot + scoring-function version + weights + thesis) is stored and its keccak256 hash sent onchain, so anyone can recompute the weights. | US-16, US-19 |
 | FR-A8 | Rebalance loop: every 5 minutes (configurable) read weights; if drift > trigger, plan the smallest set of trades that restores tolerance and send them one by one. | US-17 |
 | FR-W8 | Portfolio view: target vs current weight per stock with drift highlighted, plus the owner's bounds. | US-15, US-17 |
 | FR-W9 | Research viewer: the report behind the current targets, with a hash check against the onchain `researchHash`. | US-19 |
-| FR-A9 | Ticker mapping: research uses real tickers from the Tokenized Stocks API (NVDA, AAPL); trades use our Base Sepolia test tokens (tNVDA, tAAPL) through a config table keyed by ticker. Mainnet contract addresses from the API are never written to vault or agent config. The app labels this: "Research uses real market data; trades use test stocks on Base Sepolia." | US-16, G4 |
+| FR-W10 | Mainnet shadow panel (read-only, no wallet, no transactions): for NVDA and AAPL, shows the real feed price, a real pool quote and the premium between them, labelled e.g. "On mainnet right now this buy would be blocked: premium 3.8%". Proves the problem is real while every trade stays on Base Sepolia. | G2, G3 |
+| FR-A9 | Ticker mapping: research uses real tickers from the Tokenized Stocks API (NVDA, AAPL); trades use our Base Sepolia test tokens (tNVDA, tAAPL) through a config table keyed by ticker. Mainnet contract addresses from the API are never written to vault or agent config. The only mainnet addresses in the codebase live in a separate read-only shadow config (FR-W10) that the signer, executor and vault config never load. The app labels this: "Research uses real market data; trades use test stocks on Base Sepolia." | US-16, G4 |
 
 ## 5. Smart contract interface
 
@@ -231,6 +241,7 @@ PangoVault is one non-upgradeable contract of roughly 200 lines, built on OpenZe
 | --- | --- | --- | --- |
 | `perTradeCapUsd` | uint256 (6 decimals) | 100 USDC | Max USDC in one buy |
 | `dailyCapUsd` | uint256 (6 decimals) | 250 USDC | Max USDC bought per UTC day |
+| `dailySellCapUsd` | uint256 (6 decimals) | 150 USDC | Max USDC value sold per UTC day (well above the ~$36 sell of an AT-15 rebalance) |
 | `allowed` | bool, per stock | true | Stock may be traded |
 | `feed` | address, per stock | test feed | Chainlink-style `AggregatorV3Interface`, 8 decimals |
 | `bandBps` | uint16, per stock | 100 (1%) | Allowed distance from oracle price when feed is fresh |
@@ -243,7 +254,7 @@ PangoVault is one non-upgradeable contract of roughly 200 lines, built on OpenZe
 
 ```solidity
 // owner
-function setMandate(uint256 perTradeCapUsd, uint256 dailyCapUsd) external onlyOwner;
+function setMandate(uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd) external onlyOwner;
 function configureStock(address token, StockConfig calldata cfg) external onlyOwner;
 function setAgent(address agent) external onlyOwner;
 function setRouter(address router) external onlyOwner;
@@ -260,6 +271,7 @@ function sell(address token, uint256 rawIn) external onlyAgent whenNotPaused non
 function previewBuy(address token, uint256 usdcIn) external view returns (bytes4 errorSelector, uint256 maxPrice, uint256 feedAge);
 function previewSell(address token, uint256 rawIn) external view returns (bytes4 errorSelector, uint256 minPrice, uint256 feedAge);
 function spentToday() external view returns (uint256);
+function soldToday() external view returns (uint256);
 ```
 
 ### Buy check order
@@ -274,7 +286,7 @@ function spentToday() external view returns (uint256);
 8. `balanceOfUI(vault) > maxShares` → `ExceedsShareCap(sharesAfter, maxShares)`.
 9. Update `spentToday`, emit `TradeExecuted`.
 
-Sell mirrors steps 1, 2, 4, 5 and checks `BelowFairValue(receivedPrice, minPrice)`.
+Sell mirrors steps 1, 2, 4, 5, then checks `soldToday + usdValue > dailySellCapUsd` → `ExceedsDailySellCap` (value at oracle price), then `BelowFairValue(receivedPrice, minPrice)`. `previewSell` includes the sell-cap check.
 
 ### Errors and events
 
@@ -284,6 +296,7 @@ Sell mirrors steps 1, 2, 4, 5 and checks `BelowFairValue(receivedPrice, minPrice
 | `EnforcedPause` (OZ v5) | The owner paused the agent |
 | `TokenNotAllowed` | This stock is not on your list |
 | `ExceedsPerTradeCap` / `ExceedsDailyCap` | Over your per-trade or daily limit |
+| `ExceedsDailySellCap` | Over your daily selling limit |
 | `InvalidFeedAnswer` / `StaleOracle` | No trustworthy price right now |
 | `CorporateActionPending` | A split or dividend adjustment is scheduled; trading waits until it takes effect |
 | `AboveFairValue` / `BelowFairValue` | The price is too far from the reference price |
@@ -303,12 +316,14 @@ The target check runs after step 8 of the buy check order (and the matching sell
 | `toleranceBps` | uint16 | 200 (2%) | How far a trade may land from target |
 | `driftTriggerBps` | uint16 | 500 (5 pp) | Absolute weight drift that makes the agent rebalance (agent policy, shown in the app) |
 | `targetBps` | uint16, per stock | 3500 | Current target, set by the agent via `setTargets` |
+| `targetsCooldown` | uint32 seconds | 60 s | Minimum time between two `setTargets` calls; owner-set, short enough for back-to-back demo runs (AT-14, AT-16) |
 | `researchHash` | bytes32 | keccak256 of the report | Links the targets to the research that produced them |
 
 ```solidity
 // owner
 function setWeightBounds(address token, uint16 minBps, uint16 maxBps) external onlyOwner;
 function setTolerance(uint16 toleranceBps, uint16 driftTriggerBps) external onlyOwner;
+function setTargetsCooldown(uint32 cooldownSeconds) external onlyOwner;
 
 // agent
 function setTargets(address[] calldata tokens, uint16[] calldata weightsBps, bytes32 researchHash) external onlyAgent whenNotPaused;
@@ -322,6 +337,7 @@ function weightOf(address token) external view returns (uint16 weightBps);
 | --- | --- |
 | `TargetOutOfBounds(token, weightBps)` | That target is outside the range you allowed |
 | `OvershootsTarget(token, weightAfterBps, targetBps)` | This trade would push the stock past its target |
+| `TargetsCooldown(readyAt)` | Targets were changed moments ago; wait before changing them again |
 
 Event: `TargetsSet(researchHash, tokens, weightsBps)`. With two test stocks plus USDC, valuation reads two feeds per trade, so gas stays small.
 
@@ -335,7 +351,7 @@ The bar is: a stolen agent key or a fooled model can lose nothing outside the ma
 | --- | --- | --- |
 | NFR-1 | Security | No upgradeability, no `delegatecall`, no arbitrary external call; only the configured router and tokens are called. |
 | NFR-2 | Security | `nonReentrant` on `buy`/`sell`/`withdraw`; checks-effects-interactions; `SafeERC20` for every transfer. |
-| NFR-3 | Security | Agent key compromise is bounded: worst case = trades inside the mandate at fair value, i.e. a loss of at most about `bandBps × dailyCapUsd` per day on buys (1% × 250 USDC ≈ 2.5 USDC/day with the example mandate) plus the band on sells it can make inside the owner's weight bounds. Owner key is never on the server. |
+| NFR-3 | Security | Agent key compromise is bounded: worst case = trades inside the mandate at fair value, i.e. a loss of at most about `bandBps × (dailyCapUsd + dailySellCapUsd)` per day (1% × (250 + 150) USDC ≈ 4 USDC/day with the example mandate). The `setTargets` cooldown stops it from rewriting targets in a tight loop. The same fair-value minimum also blocks sandwich attacks and bad slippage on every trade. Owner key is never on the server. |
 | NFR-4 | Security | Secrets (agent key, LLM key) only in env vars on the server; never in the repo or the browser. |
 | NFR-5 | Correctness | All prices normalised to 18 decimals inside the contract; feed 8 decimals, USDC 6, B20 per its `decimals()`. Unit tests cover each conversion. |
 | NFR-6 | Performance | Typed command to submitted transaction under 15 s on Base Sepolia (LLM call included); dashboard refresh every block or 4 s. |
@@ -345,6 +361,7 @@ The bar is: a stolen agent key or a fooled model can lose nothing outside the ma
 | NFR-10 | Usability | Every error shown with its plain-English reason (section 5); mascot pose readable without text. |
 | NFR-11 | Compliance | App states: test network only, not financial advice; Coinbase tokenized stocks are for eligible non-US persons. |
 | NFR-12 | Abuse | Public chat and attack console are rate-limited (e.g. 1 attack per 30 s per IP, daily gas budget for the agent key); when the budget is hit the console shows preflight results only, labelled "simulated". |
+| NFR-13 | Operations | Agent runs on Railway as exactly one instance with one worker and no sleep/scale-to-zero, so only one rebalance loop exists (protects NFR-7). The web app reads the log only through the agent API, never the database directly. Agent key lives only in Railway env vars. Service, database and the agent key's Sepolia ETH stay funded through the judging period after Dec 5. |
 
 ## 7. Testnet deployment plan (Base Sepolia)
 
@@ -360,7 +377,7 @@ We deploy on Base Sepolia with B20 test stocks that we issue ourselves, so we co
 | StockSwap | Minimal fixed-price pool holding tUSDC and test stocks; owner sets the quoted price; exposes a `quote()` view used by `previewBuy` / `previewSell` | Test | Simulate a weekend premium (e.g. +4%) on demand |
 | PangoVault | Section 5 | Our product | The thing being judged |
 
-**The demo runs only on Base Sepolia:** no mainnet wallets, transactions or funds. Mainnet is read once during development (spike S3) so our test feeds copy the real feeds' units and weekend behaviour.
+**The demo runs only on Base Sepolia:** no mainnet wallets, transactions or funds. Mainnet is only ever read, never written: once during development (spike S3) so our test feeds copy the real feeds' units and weekend behaviour, and live by the read-only shadow panel (FR-W10).
 
 ### Runbook
 
@@ -390,7 +407,7 @@ We deploy on Base Sepolia with B20 test stocks that we issue ourselves, so we co
 | --- | --- |
 | base-anvil (local) | Unit, fuzz and scenario tests; time travel |
 | Base Sepolia | Public deployment, demo video, judges' live try |
-| Base mainnet (development only) | Not in the demo; read once in spike S3 to calibrate the test feeds |
+| Base mainnet (read-only) | No transactions ever; read in spike S3 to calibrate the test feeds, and by the shadow panel (FR-W10) |
 
 ## 8. Test plan
 
@@ -425,7 +442,7 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 #### Portfolio acceptance tests
 
 - [ ] AT-13 (US-15) Owner sets bounds 10%–40% per stock, tolerance 2%, trigger 5%; values read back from the vault.
-- [ ] AT-14 (US-16, US-19) Agent produces a research report and calls `setTargets`; the app's hash check matches the onchain `researchHash`.
+- [ ] AT-14 (US-16, US-19) Agent produces a research report and calls `setTargets`; the app's hash check matches the onchain `researchHash`, and recomputing the weights from the report's snapshot gives the committed weights.
 - [ ] AT-15 (US-17) `SetDrift(tNVDA, +30%)` → within one loop the agent rebalances and every weight ends within 2% of target, all trades on Basescan.
 - [ ] AT-16 (US-18) Poisoned research tells the agent to target 80% tNVDA → `TargetOutOfBounds`; a buy past target + tolerance → `OvershootsTarget`.
 - [ ] AT-17 Rebalance attempted while `ScheduleSplit(10)` is pending → `CorporateActionPending`; the agent waits and finishes after the split takes effect.
@@ -438,7 +455,7 @@ Five spikes run before any product code; each either proves its assumption or sw
 | --- | --- | --- | --- | --- |
 | S1 | We cannot issue a B20 asset token on Sepolia with multiplier control, or a contract cannot read a pending multiplier update | With base-forge on base-anvil: create an asset token via the factory, schedule a UI multiplier update, read pending state and `balanceOfUI` from a test contract | Pending update readable from Solidity; `balanceOfUI` changes after effective time | `CorporateActionPending` driven by an owner-set flag, clearly labelled as weaker |
 | S2 | B20 transfer policies block the vault (a contract) from holding stock | Mint test stock to a freshly deployed contract; transfer in and out; call `policyExists` / `isAuthorized` | Vault holds and moves the stock | Stocks settle to the owner wallet; vault holds USDC only |
-| S3 | Fair-value units differ between feed, API and swap price | Development only, mainnet read-only: compare Chainlink feed answer, API `nav_price` and an Aerodrome quote for NVDAc and AAPLc; measure weekend feed age | All three agree within about 1%, so our mock feed copies real semantics | Per-stock scale factor set by the owner, documented in the UI |
+| S3 | Fair-value units differ between feed, API and swap price; real stocks may not be holdable by a contract; real corporate-action windows may freeze trading too often | Development only, mainnet read-only, no wallet: (a) compare Chainlink feed answer, API `nav_price` and an Aerodrome quote for NVDAc and AAPLc, measure weekend feed age; (b) ask the policy registry (`isAuthorized`) whether a plain contract address may hold real NVDA; (c) read real lead times (announcement → effective) from `/corporate-actions` | (a) all three agree within about 1%, so our mock feed copies real semantics; (b) answer recorded either way; (c) typical pending window ≤ 1 day | (a) per-stock scale factor set by the owner, documented in the UI; (b) "what is not real yet" panel states that holding real stocks needs Coinbase's policy to allow the vault; (c) owner-set `minMultiplierChangeBps` so small dividend adjustments don't block (default stays "block all") |
 | S4 | Agent cannot decode custom errors or broadcast a reverting transaction for proof | web3.py `eth_call` on a reverting `buy`, decode the selector; send the same transaction with a manual gas limit | Error name decoded; reverted tx visible on Basescan | Show preflight result only, labelled "simulated" |
 | S5 | Weight math in the contract is wrong across decimals (USDC 6, feeds 8, B20 UI units 18) or uses too much gas | On base-anvil: vault with 2 test stocks, compute portfolioValue and weightOf against a Python reference for 50 random states; measure gas of a buy with the target check | All 50 match within 1 bps; buy stays under 300k gas | Move the overshoot check to a view the agent must pass (labelled as weaker) and keep only the owner-bounds check on setTargets |
 
