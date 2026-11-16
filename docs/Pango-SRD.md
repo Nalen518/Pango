@@ -4,6 +4,14 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — spike S1 and S5 findings**
+
+- Section 5 *Known limit* replaced: announcements are atomic, the vault reads `effectiveAt() > block.timestamp` (never `!= 0`); check step 5 and FR-V4 name the call; open question on the announcement window closed.
+- Runbook and tooling pin base-anvil **v1.5.1** (v1.1.0 lacks Cobalt), base-std v1.1.0, OpenZeppelin v5.
+- FR-V12 states the valuation formula with token decimals; proven within 1 bps in S5, split-invariant.
+- NFR-12 uses measured gas: ~245k per full buy transaction, ~170k post-swap revert, ~12M gas/day budget.
+- Section 9 records the spike results.
+
 **Nov 16, 2026 — spike S4 findings**
 
 - FR-A4: errors decoded from the vault ABI plus bubbled OpenZeppelin v5 and B20 errors; proof-mode broadcast only after a chain-id check for Base Sepolia, with an explicit gas limit.
@@ -185,7 +193,7 @@ Four components carry the product: the vault enforces, the agent proposes and ex
 | FR-V1 | Holds the owner's USDC and stock tokens; one owner, one agent address, set at deploy and changeable only by the owner. Constructor takes `owner`, `agent`, `usdc`, `router`; `usdc` is immutable, `router` changeable only by the owner via `setRouter`. | US-01, US-03 |
 | FR-V2 | Owner-only: set mandate, configure stocks, deposit, withdraw (to owner only), pause, unpause, change agent. | US-01–04 |
 | FR-V3 | Agent-only: `buy(token, usdcIn)` and `sell(token, rawAmount)`. No other function moves funds; no arbitrary call. | US-07 |
-| FR-V4 | Before a trade: check paused, allowlist, per-trade cap, daily cap (UTC day), feed freshness, pending corporate action. | US-09–11 |
+| FR-V4 | Before a trade: check paused, allowlist, per-trade cap, daily cap (UTC day), feed freshness, pending corporate action (`effectiveAt() > block.timestamp` on the B20 token, spike S1). | US-09–11 |
 | FR-V5 | Fair value: read the stock's feed (defined as USDC per UI share, 8 decimals; raw amounts convert to shares via `toUIAmount` before any price math), compute the max buy price (min sell price) as oracle price ± band; use `staleBandBps` when the feed is older than `maxStaleness`; revert `StaleOracle` past `hardStaleLimit`. | US-08, US-10 |
 | FR-V6 | Execute the swap only through the configured router; measure tokens actually received; revert `AboveFairValue` / `BelowFairValue` if outside the band. | US-08 |
 | FR-V7 | After a buy, check `balanceOfUI(vault)` against the stock's share cap; revert `ExceedsShareCap` if over. | US-05, US-11 |
@@ -234,7 +242,7 @@ The pose is computed from chain reads and the last attempt, never from the LLM.
 | --- | --- | --- |
 | FR-V10 | Owner-only: per-stock `minWeightBps` / `maxWeightBps`, vault-wide `toleranceBps` and `driftTriggerBps`. | US-15 |
 | FR-V11 | Agent-only `setTargets(tokens, weightsBps, researchHash)`: each weight within owner bounds, total ≤ 10,000 bps (rest stays in USDC); configured stocks left out of the call get target 0 (and revert `TargetOutOfBounds` if their `minWeightBps` > 0); `researchHash` must be non-zero; stores targets and hash; emits `TargetsSet`. | US-16, US-18 |
-| FR-V12 | Portfolio valuation in the contract: value = USDC + Σ `balanceOfUI` × feed price (feed = price per UI share, so the multiplier is never applied twice); `weightOf(token)` view. | US-17 |
+| FR-V12 | Portfolio valuation in the contract, 18 decimals: value = USDC × 1e12 + Σ `balanceOfUI × price8 × 1e10 / 10^decimals` (feed = USDC per UI share, so the multiplier is never applied twice; `balanceOfUI` is in the token's own `decimals()`, not always 18); `weightBps = value × 10,000 / total`, 0 when total is 0; `weightOf(token)` view. Proven in spike S5 within 1 bps of exact math, including splits. Whether real Coinbase feeds are per share or per raw token is still open (spike S3); only the per-stock value line would change. | US-17 |
 | FR-V13 | After every trade, the traded stock's weight must stay within target ± `toleranceBps` in the direction of the trade, else revert `OvershootsTarget`. The check is skipped until `setTargets` has been called at least once, so the vault is usable before research runs. | US-17, US-18 |
 | FR-A7 | Research step: collect news (OpenClaw-style feed), token metadata and feed history into a signal snapshot (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp). A fixed, versioned scoring function, not the LLM, turns the snapshot into weights clamped to owner bounds; the LLM only writes the thesis explaining them and cites the snapshot's sources. The report (snapshot + scoring-function version + weights + thesis) is stored and its keccak256 hash sent onchain, so anyone can recompute the weights. | US-16, US-19 |
 | FR-A8 | Rebalance loop: every 5 minutes (configurable) read weights; if drift > trigger, plan the smallest set of trades that restores tolerance and send them one by one. | US-17 |
@@ -292,7 +300,7 @@ function soldToday() external view returns (uint256);
 2. Stock not allowed → `TokenNotAllowed`.
 3. `usdcIn > perTradeCapUsd` → `ExceedsPerTradeCap`; `spentToday + usdcIn > dailyCapUsd` → `ExceedsDailyCap`.
 4. Feed answer ≤ 0 → `InvalidFeedAnswer`; feed age > `hardStaleLimit` → `StaleOracle`.
-5. Pending multiplier update not yet effective → `CorporateActionPending(effectiveAt)`.
+5. Pending multiplier update not yet effective — `IB20Asset(token).effectiveAt() > block.timestamp` → `CorporateActionPending(effectiveAt)`.
 6. Compute `maxPrice = oraclePrice × (1 + band)` (price per UI share) and `minOut` in UI shares, converted to raw units for the swap; `forceApprove` the router for exactly `usdcIn` (never unlimited); swap; measure tokens received.
 7. Received < `minOut` → `AboveFairValue(paidPrice, maxPrice)` (whole call reverts, nothing moves).
 8. `balanceOfUI(vault) > maxShares` → `ExceedsShareCap(sharesAfter, maxShares)`.
@@ -354,7 +362,7 @@ function weightOf(address token) external view returns (uint16 weightBps);
 
 Event: `TargetsSet(researchHash, tokens, weightsBps)`. With two test stocks plus USDC, valuation reads two feeds per trade, so gas stays small.
 
-**Known limit:** a contract cannot read past events, so an open `Announcement` window is only enforced if B20 exposes it through a view function. If it does not, announcements are shown by the agent and UI as advice, and labelled as such.
+**Corporate actions (spike S1):** B20 announcements are atomic — `announce()` emits `Announcement` and `EndAnnouncement` in the same transaction, so there is no open window to read. The vault enforces corporate actions through the scheduled multiplier only: a split is pending ⇔ `effectiveAt() > block.timestamp`, with the target in `newUIMultiplier()`. Never test `effectiveAt() != 0`: it keeps its past value after the split takes effect. Reading this from the vault costs about 4k gas.
 
 ## 6. Non-functional requirements
 
@@ -373,7 +381,7 @@ The bar is: a stolen agent key or a fooled model can lose nothing outside the ma
 | NFR-9 | Verifiability | All contracts verified on sepolia.basescan.org; repo public with README and deployed addresses. |
 | NFR-10 | Usability | Every error shown with its plain-English reason (section 5); mascot pose readable without text. |
 | NFR-11 | Compliance | App states: test network only, not financial advice; Coinbase tokenized stocks are for eligible non-US persons. |
-| NFR-12 | Abuse | Public chat and attack console are rate-limited (e.g. 1 attack per 30 s per IP, daily gas budget for the agent key); when the budget is hit the console shows preflight results only, labelled "simulated". The budget is counted in gas units, not transactions: a revert at the top of `buy` costs ~22k gas (spike S4), but `AboveFairValue`, `ExceedsShareCap` and `OvershootsTarget` revert after the swap and cost close to a full buy (target under 300k, spike S5). Proof-mode sends use a fixed gas limit of 400k; the daily budget (e.g. 50 proof reverts ≈ 20M gas) and the agent key's Sepolia ETH are sized from the measured gas of a full buy once S5 reports it. |
+| NFR-12 | Abuse | Public chat and attack console are rate-limited (e.g. 1 attack per 30 s per IP, daily gas budget for the agent key); when the budget is hit the console shows preflight results only, labelled "simulated". The budget is counted in gas units, not transactions: a revert at the top of `buy` costs ~22k gas (spike S4), but `AboveFairValue`, `ExceedsShareCap` and `OvershootsTarget` revert after the swap and cost close to a full buy (target under 300k, spike S5). Measured in spike S5: a full buy with every check costs ~223k execution gas (~245k per transaction) and a post-swap `AboveFairValue` revert ~170k. Proof-mode sends use a fixed gas limit of 400k; the daily budget is about 50 proof reverts ≈ 12M gas, and the agent key's Sepolia ETH is sized from that. |
 | NFR-13 | Operations | Agent runs on Railway as exactly one instance with one worker and no sleep/scale-to-zero, so only one rebalance loop exists (protects NFR-7). The web app reads the log only through the agent API, never the database directly. Agent key lives only in Railway env vars. Service, database and the agent key's Sepolia ETH stay funded through the judging period after Dec 5. |
 
 ## 7. Testnet deployment plan (Base Sepolia)
@@ -394,7 +402,7 @@ We deploy on Base Sepolia with B20 test stocks that we issue ourselves, so we co
 
 ### Runbook
 
-1. Install Base's Foundry build; `base-forge install base/base-std` and OpenZeppelin.
+1. Install Base's Foundry build pinned to **v1.5.1** (`base-foundryup --install v1.5.1`; v1.1.0 lacks the Cobalt scheduled-split functions); `base-forge install base/base-std@v1.1.0` and OpenZeppelin v5.
 2. Create two wallets: owner and agent. Fund both from a Base Sepolia faucet; agent needs gas only.
 3. Run `script/Deploy.s.sol`: tUSDC → test stocks via the B20 factory → feeds → StockSwap → PangoVault.
 4. Run `script/Seed.s.sol`: mint tUSDC to owner, mint stocks into StockSwap, set feed prices, set StockSwap price equal to the feed. No allowlist setup is needed: tNVDA and tAAPL keep every policy slot at `0` (always allow), so the vault and StockSwap can hold and move them (spike S2).
@@ -464,6 +472,8 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 
 Five spikes run before any product code; each either proves its assumption or switches us to a named fallback by Nov 17.
 
+**Results (Nov 16, details in `docs/SPIKES.md`):** S1 pass, S2 pass, S4 pass and S5 pass on base-anvil (no fallback needed); S3 partial — mainnet feeds measured, real-token checks deferred (Coinbase API blocked on the build network, public RPC rate-limited). Sepolia tx hashes for S1, S2 and S4 are deferred until a deployer wallet is funded.
+
 | ID | Risk | 2-hour spike | Pass means | Fallback if it fails |
 | --- | --- | --- | --- | --- |
 | S1 | We cannot issue a B20 asset token on Sepolia with multiplier control, or a contract cannot read a pending multiplier update | With base-forge on base-anvil: create an asset token via the factory, schedule a UI multiplier update, read pending state and `balanceOfUI` from a test contract | Pending update readable from Solidity; `balanceOfUI` changes after effective time | `CorporateActionPending` driven by an owner-set flag, clearly labelled as weaker |
@@ -512,7 +522,7 @@ Work overlaps on purpose: deployment starts before the vault freeze so spike fin
 
 ### Open questions
 
-- [ ] Does B20 expose an open `Announcement` window through a view function, or only through events? (S1)
+- [x] Does B20 expose an open `Announcement` window through a view function, or only through events? Answered by S1: neither — announcements are atomic, so there is no window; the vault reads the scheduled multiplier instead.
 - [ ] Which LLM provider runs the agent, and what is the budget?
 - [ ] Can a Bankr wallet sign a call to `PangoVault.buy`, so Bankr can be the agent's signer?
 - [x] Name decided Nov 15: Pango, for both the product and the trenggiling mascot.
@@ -583,7 +593,7 @@ Full list: [Base network faucets](https://docs.base.org/chain/network-faucets). 
 
 | Tool | Use | Reference |
 | --- | --- | --- |
-| base-forge, base-cast, base-anvil, base-chisel | Build, test and deploy against B20 precompiles; install with the base-anvil install script, then `base-foundryup` | [base-anvil docs](https://docs.base.org/sdks/base-anvil) · [GitHub](https://github.com/base/base-anvil) |
+| base-forge, base-cast, base-anvil, base-chisel | Build, test and deploy against B20 precompiles; install with the base-anvil install script, then `base-foundryup --install v1.5.1` (pinned; needed for Cobalt) | [base-anvil docs](https://docs.base.org/sdks/base-anvil) · [GitHub](https://github.com/base/base-anvil) |
 | base-std | Solidity interfaces for B20 (`base-forge install base/base-std`) | [Chainstack B20 tutorial](https://docs.chainstack.com/docs/base-tutorial-deploy-a-b20-token) |
 | OpenZeppelin Contracts | `Ownable2Step`, `Pausable`, `ReentrancyGuard`, `SafeERC20` | [OpenZeppelin docs](https://docs.openzeppelin.com/contracts) |
 | wagmi, viem, `@base-org/account` | Web app wallet connection and contract calls on Base Sepolia | [Base app quickstart](https://docs.base.org/apps) · [wagmi baseAccount connector](https://wagmi.sh/vue/api/connectors/baseAccount) |
