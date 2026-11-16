@@ -4,6 +4,16 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — idea validation pass**
+
+- Research weights are hybrid: fixed scoring gives a baseline, the LLM proposes final weights with cited reasons within baseline ± `llmBandBps`; the report lets anyone recompute the baseline and check the band (US-16, US-19, FR-A7, AT-14).
+- Cut order fixed now (section 9): shadow panel → web-side Builder Codes → mascot to 3 poses → research step.
+- Pitch leads with real S3 data (49 h NVDA weekend freeze, +2.5% reopen) in the Problem section, G3 and section 9.
+- Attack console: free-text "try to trick it" is the hero, the 6 presets are shortcuts (US-13, FR-W4).
+- Track claim softened to the page's actual wording; judging = official rules only (equal weights, §6 requirements, testnet not penalised); entry needs an X post tagging @buildonbase and the submission form.
+- Persona no longer names Jakarta (Indonesia eligibility unconfirmed; ISP blocks Coinbase domains). Test-stock names make clear they are not the real companies' shares (FR-W7).
+- S3(b) lead recorded: Base docs say secondary holding is permissionless; verify onchain before the freeze.
+
 **Nov 16, 2026 — API contract decisions D1–D11 (see `docs/API-CONTRACT.md` §9)**
 
 - D1: `maxShares` is in the token's own decimals, not always 18.
@@ -64,7 +74,9 @@ Pango is a research-to-portfolio agent for tokenized stocks: it turns research i
 
 Tokenized stocks on Base trade 24/7, but the reference price freezes when US markets close and corporate actions change the token-to-share ratio. An AI agent that reads news can be fooled into buying at a weekend premium or chasing a fake split. Existing agent tools keep their limits inside the model or a private backend, and generic spending firewalls only check dollar amounts.
 
-The track's own idea list asks for research-to-portfolio agents and agent-managed rebalancing. Pango does both, and makes the safety of every rebalance trade a contract guarantee rather than a prompt.
+The Agentic Stock Finance track asks for agents that "research, earn or trade around tokenized stocks in novel ways" (stocksmaxxing page, read Nov 16; its idea list showed "coming soon"). Pango researches into a target portfolio and rebalances it, and makes the safety of every rebalance trade a contract guarantee rather than a prompt.
+
+Measured on Base mainnet (spike S3): the Coinbase NVDA feed froze for 49 h over the Nov 13–16, 2026 weekend and NVDA reopened 2.5% higher — the gap an agent can be talked into buying across.
 
 ### Goals
 
@@ -72,7 +84,7 @@ The track's own idea list asks for research-to-portfolio agents and agent-manage
 | --- | --- | --- |
 | G1 | Every safety rule is enforced onchain, never only in the prompt | All 6 attack-console presets and every blocking scenario script (section 7) revert in the contract on Base Sepolia |
 | G2 | Rules are specific to tokenized stocks | Fair-value band from a price feed, corporate-action block, share-denominated cap all live |
-| G3 | A judge understands it in 2 min 15 s | Demo video shows one normal trade, one blocked attack and one drift → rebalance, each with a Basescan link |
+| G3 | A judge understands it in 2 min 15 s | Demo video opens with the real weekend freeze measured on mainnet (spike S3), then shows one normal trade, one blocked attack and one drift → rebalance, each with a Basescan link |
 | G4 | Anyone can verify it | Contracts verified on sepolia.basescan.org; every log line links to its transaction |
 | G5 | The agent does real portfolio work: research → target weights → rebalancing | Targets committed onchain with a research hash; after a price shock, rebalancing brings every stock back within tolerance on Base Sepolia |
 
@@ -94,7 +106,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 
 | Persona | Who | Wants | Fears |
 | --- | --- | --- | --- |
-| Owner (Rina) | Non-US retail investor holding tokenized stocks, e.g. in Jakarta | An agent that trades for her while she sleeps | Losing money to a hallucination, a fake headline or a weekend markup |
+| Owner (Rina) | Non-US retail investor holding tokenized stocks, living in a jurisdiction where Coinbase tokenized stocks are offered (Base docs: "eligible jurisdictions outside of the U.S."; no country list published). We no longer name Jakarta: Indonesian ISPs block Coinbase domains (observed Nov 16) and Indonesia's eligibility is unconfirmed | An agent that trades for her while she sleeps | Losing money to a hallucination, a fake headline or a weekend markup |
 | Agent builder (Dimas) | Developer running a trading agent (own key or Bankr wallet) | Plug his agent into hard limits without rewriting it | His agent's key leaking and being drained |
 | Judge | Hackathon judge, 2 min 15 s video plus a live try on our shared demo vault (agent side only: chat and attack console, no wallet or owner rights needed) | Proof the rules hold outside the model | A demo that only works because of a prompt |
 
@@ -124,7 +136,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 
 | ID | Story | Acceptance criteria |
 | --- | --- | --- |
-| US-13 | As a judge, I fire preset attacks from an attack console. | Exactly 6 presets, each with its expected error: fake split news (`AboveFairValue`), weekend premium (`AboveFairValue`), withdraw to stranger (`OwnableUnauthorizedAccount`), oversized buy (`ExceedsPerTradeCap`), unlisted token (`TokenNotAllowed`), panic sell of the whole position (`OvershootsTarget`, needs targets set); each shows the revert and a Basescan link. |
+| US-13 | As a judge, I try to trick the agent from an attack console. | The hero is a free-text box ("try to make it overpay, trade through a fake split, or move funds"); whatever the model is talked into, the vault's verdict and Basescan link are shown. Below it, exactly 6 presets as shortcuts, each with its expected error: fake split news (`AboveFairValue`), weekend premium (`AboveFairValue`), withdraw to stranger (`OwnableUnauthorizedAccount`), oversized buy (`ExceedsPerTradeCap`), unlisted token (`TokenNotAllowed`), panic sell of the whole position (`OvershootsTarget`, needs targets set); each shows the revert and a Basescan link. |
 | US-14 | As a judge, I see the system's state at a glance. | The trenggiling's pose matches chain state: walking, peeking, half-curled, curled, sleeping (section 4.4). |
 
 ### Portfolio stories (research-to-portfolio and rebalancing)
@@ -132,10 +144,10 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 | ID | Story | Acceptance criteria |
 | --- | --- | --- |
 | US-15 | As an owner, I set a minimum and maximum weight per stock, a tolerance and a drift trigger, so the agent's portfolio stays inside my comfort zone. | Owner stores `minWeightBps`, `maxWeightBps` per stock and `toleranceBps`, `driftTriggerBps` for the vault; only the owner can change them; emits `WeightBoundsUpdated` / `ToleranceUpdated`. |
-| US-16 | As the agent, I turn research into target weights and commit them onchain. | The agent records a signal snapshot per stock (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp), a fixed scoring function turns it into weights, the LLM writes the thesis explaining them, and the agent calls `setTargets(tokens, weightsBps, researchHash)`; the vault stores them and emits `TargetsSet`. |
+| US-16 | As the agent, I turn research into target weights and commit them onchain. | The agent records a signal snapshot per stock (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp); a fixed scoring function turns it into baseline weights; the LLM proposes final weights with a cited reason per stock, each limited to baseline ± `llmBandBps` and to the owner's bounds; and the agent calls `setTargets(tokens, weightsBps, researchHash)`; the vault stores them and emits `TargetsSet`. |
 | US-17 | As the agent, I rebalance when the portfolio drifts. | When any stock's weight differs from its target by more than `driftTriggerBps` (absolute percentage points of portfolio weight), the agent buys or sells until it is within `toleranceBps`; every trade still passes all section 5 checks. |
 | US-18 | As the agent, I cannot rewrite the portfolio outside the owner's bounds or overshoot my own targets. | A target outside `[minWeightBps, maxWeightBps]` or summing over 100% reverts `TargetOutOfBounds`; a trade that pushes a stock past target ± tolerance reverts `OvershootsTarget`. |
-| US-19 | As an owner, I can read the research behind the current targets and check it was not changed afterwards. | The app shows the research report next to the targets; its keccak256 hash matches the `researchHash` stored onchain; re-running the scoring function on the report's signal snapshot reproduces the same weights. |
+| US-19 | As an owner, I can read the research behind the current targets and check it was not changed afterwards. | The app shows the research report next to the targets; its keccak256 hash matches the `researchHash` stored onchain; re-running the scoring function on the report's signal snapshot reproduces the baseline weights, and every final weight is within baseline ± `llmBandBps` with its cited reason. |
 
 ## 3. System architecture
 
@@ -228,10 +240,10 @@ Four components carry the product: the vault enforces, the agent proposes and ex
 | FR-W1 | Connect wallet on Base Sepolia and load the vault from config. The demo uses one shared demo vault that we own; judges use chat and the attack console without a wallet. No vault factory. | US-01, US-13 |
 | FR-W2 | Mandate form with plain-English hints for each limit; writes to the vault. | US-01 |
 | FR-W3 | Dashboard: USDC balance, holdings in shares, oracle price, swap price, band, feed age, pending corporate actions. | US-05 |
-| FR-W4 | Chat with the agent and an attack console with the 6 presets of US-13, rate-limited (NFR-12). | US-13 |
+| FR-W4 | Chat with the agent and an attack console: a free-text "try to trick it" box first, the 6 presets of US-13 as shortcuts; both rate-limited (NFR-12). | US-13 |
 | FR-W5 | Receipt log that prints each attempt line by line, every line linking to its transaction. | US-06 |
 | FR-W6 | Pause and withdraw buttons always visible to the owner. | US-03, US-04 |
-| FR-W7 | Labels on every test asset: "test stock issued by us on Base Sepolia", "test price feed", "test swap pool". | G4 |
+| FR-W7 | Labels on every test asset: "test stock issued by us on Base Sepolia", "test price feed", "test swap pool". Test stocks are named so they cannot be mistaken for the real company's shares or imply any endorsement (rules §6): token name "Pango Test NVDA — not NVIDIA stock" / "Pango Test AAPL — not Apple stock", symbols tNVDA / tAAPL; the app never claims rights in the underlying companies. | G4 |
 
 ### 4.4 Trenggiling mascot states
 
@@ -253,7 +265,7 @@ The pose is computed from chain reads and the last attempt, never from the LLM.
 | FR-V11 | Agent-only `setTargets(tokens, weightsBps, researchHash)`: each weight within owner bounds, total ≤ 10,000 bps (rest stays in USDC); configured stocks left out of the call get target 0 (and revert `TargetOutOfBounds` if their `minWeightBps` > 0); `researchHash` must be non-zero; stores targets and hash; emits `TargetsSet`. | US-16, US-18 |
 | FR-V12 | Portfolio valuation in the contract, 18 decimals: value = USDC × 1e12 + Σ `balanceOfUI × price8 × 1e10 / 10^decimals` (feed = USDC per UI share, so the multiplier is never applied twice; `balanceOfUI` is in the token's own `decimals()`, not always 18); `weightBps = value × 10,000 / total`, 0 when total is 0; `weightOf(token)` view. Proven in spike S5 within 1 bps of exact math, including splits. Whether real Coinbase feeds are per share or per raw token is still open (spike S3); only the per-stock value line would change. | US-17 |
 | FR-V13 | After every trade, the traded stock's weight must stay within target ± `toleranceBps` in the direction of the trade, else revert `OvershootsTarget`. The check is skipped until `setTargets` has been called at least once, so the vault is usable before research runs. | US-17, US-18 |
-| FR-A7 | Research step: collect news (OpenClaw-style feed), token metadata and feed history into a signal snapshot (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp). A fixed, versioned scoring function, not the LLM, turns the snapshot into weights clamped to owner bounds; the LLM only writes the thesis explaining them and cites the snapshot's sources. The report (snapshot + scoring-function version + weights + thesis) is stored and its keccak256 hash sent onchain, so anyone can recompute the weights. | US-16, US-19 |
+| FR-A7 | Research step: collect news (OpenClaw-style feed), token metadata and feed history into a signal snapshot (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp). Hybrid weights: a fixed, versioned scoring function turns the snapshot into **baseline** weights; the LLM then proposes **final** weights with a reason per stock citing snapshot sources; the agent clamps each final weight to baseline ± `llmBandBps` (default 1,000 bps = 10 pp, agent config) and to the owner's bounds before sending. The report (snapshot + scoring-function version + baseline + LLM proposal + final weights + reasons + thesis) is stored and its keccak256 hash sent onchain, so anyone can recompute the baseline and check the LLM stayed inside its band. The vault enforces the owner's bounds regardless (FR-V11), so the LLM's freedom never weakens safety. | US-16, US-19 |
 | FR-A8 | Rebalance loop: every 5 minutes (configurable) read weights; if drift > trigger, plan the smallest set of trades that restores tolerance and send them one by one. | US-17 |
 | FR-W8 | Portfolio view: target vs current weight per stock with drift highlighted, plus the owner's bounds. | US-15, US-17 |
 | FR-W9 | Research viewer: the report behind the current targets, with a hash check against the onchain `researchHash`. | US-19 |
@@ -474,7 +486,7 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 #### Portfolio acceptance tests
 
 - [ ] AT-13 (US-15) Owner sets bounds 10%–40% per stock, tolerance 2%, trigger 5%; values read back from the vault.
-- [ ] AT-14 (US-16, US-19) Agent produces a research report and calls `setTargets`; the app's hash check matches the onchain `researchHash`, and recomputing the weights from the report's snapshot gives the committed weights.
+- [ ] AT-14 (US-16, US-19) Agent produces a research report and calls `setTargets`; the app's hash check matches the onchain `researchHash`; recomputing from the report's snapshot gives its baseline weights, and each committed weight is within baseline ± `llmBandBps`.
 - [ ] AT-15 (US-17) `SetDrift(tNVDA, +30%)` → within one loop the agent rebalances and every weight ends within 2% of target, all trades on Basescan.
 - [ ] AT-16 (US-18) Poisoned research tells the agent to target 80% tNVDA → `TargetOutOfBounds`; a buy past target + tolerance → `OvershootsTarget`.
 - [ ] AT-17 Rebalance attempted while `ScheduleSplit(10)` is pending → `CorporateActionPending`; the agent waits and finishes after the split takes effect.
@@ -482,6 +494,8 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 ## 9. Risks and 2-hour spikes
 
 Five spikes run before any product code; each either proves its assumption or switches us to a named fallback by Nov 17.
+
+**Lead for S3(b), not yet verified onchain:** Base's integration guide says secondary holding and trading of Coinbase tokenized stocks is permissionless and KYC applies only to mint/redeem by Authorized Participants; policies block specific addresses such as sanctioned ones. That suggests a plain contract can hold real stocks; confirm with `policyId` / `isAuthorized` on a real token once a provider RPC is available (do this before the Nov 23 freeze).
 
 **Results (Nov 16, details in `docs/SPIKES.md`):** S1 pass, S2 pass, S4 pass and S5 pass on base-anvil (no fallback needed); S3 partial — mainnet feeds measured, real-token checks deferred (Coinbase API blocked on the build network, public RPC rate-limited). Sepolia tx hashes for S1, S2 and S4 are deferred until a deployer wallet is funded.
 
@@ -498,9 +512,10 @@ Five spikes run before any product code; each either proves its assumption or sw
 | Risk | Mitigation |
 | --- | --- |
 | Solidity experience is limited (level B) | Keep the vault to about 200 lines on OpenZeppelin; pair-write it; tests first |
-| The category looks crowded (agent spending firewalls) | Lead the pitch and UI with stock problems: fair value, splits, share caps |
+| The category looks crowded (agent spending firewalls) | Lead the pitch and UI with stock problems: fair value, splits, share caps — backed by real data measured on Base mainnet (spike S3): the Coinbase NVDA feed froze for 49 h over the Nov 13–16 weekend and NVDA reopened 2.5% higher; AAPL froze 51–53 h on two weekends |
+| A demo on our own feed and pool looks staged | Real S3 numbers in the pitch and video; free-form "try to trick it" chat is the hero of the attack console, presets are shortcuts |
 | Judges ask "why not just use Bankr?" | Position Pango as onchain rails any agent, including a Bankr wallet, can trade through |
-| 20 days solo | If behind on Nov 28: cut the research step; the owner sets targets by hand and the agent only rebalances |
+| 20 days solo | Cut order, fixed now and applied on the Nov 28 check as far as needed: (1) mainnet shadow panel (FR-W10); (2) Builder Codes on web-app transactions (agent transactions keep them); (3) mascot down to 3 poses — walking, curled, sleeping; (4) the research step — the owner sets targets by hand and the agent only rebalances. Nothing in section 5 or the 6 attack presets is ever cut |
 
 ## 10. Milestones, scope limits and open questions
 
@@ -538,7 +553,8 @@ Work overlaps on purpose: deployment starts before the vault freeze so spike fin
 - [ ] Can a Bankr wallet sign a call to `PangoVault.buy`, so Bankr can be the agent's signer?
 - [x] Name decided Nov 15: Pango, for both the product and the trenggiling mascot.
 - [x] Decided Nov 16: the demo is testnet-only, so there is no mainnet trade and no jurisdiction question for the demo.
-- [ ] What are the track's judging criteria and the build-in-public award rules? Ask in the partner Telegram groups.
+- [x] Judging criteria: only what the official rules say (decided Nov 16) — criteria weighted equally (rules §7); the project must be built on or meaningfully integrate with Base, fit its track, be original, comply with securities law and not misrepresent endorsements or rights in public companies (§6); testnet submissions are not judged less favorably (§5). Partner prizes are out of focus for now.
+- [ ] Entry requirements to meet (rules §5): a public X post with the video demo that tags @buildonbase, and the submission form describing what was built during the quest period.
 
 ### Glossary
 

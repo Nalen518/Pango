@@ -13,7 +13,7 @@ Nov 16, 2026 · tracks every phase from setup to submission (deadline **Dec 5, 2
 | Nov 17 | Spikes done or on fallback | ✅ spikes run Nov 16 (S3 partial) |
 | Nov 23 | Vault frozen | ⬜ |
 | Nov 25 | Sepolia deployment live | ⬜ |
-| Nov 28 | Scope-cut check: keep research step, or owner sets targets by hand | ⬜ |
+| Nov 28 | Scope-cut check, in this order as far as needed: shadow panel → web-side Builder Codes → mascot to 3 poses → research step (SRD §9) | ⬜ |
 | Dec 1 | Web app + mascot done | ⬜ |
 | Dec 4 | Video + X post | ⬜ |
 | **Dec 5** | **Submit** | ⬜ |
@@ -40,11 +40,14 @@ Nov 16, 2026 · tracks every phase from setup to submission (deadline **Dec 5, 2
 
 ### Still open
 
+- [ ] **Before the Nov 23 freeze:** add a provider RPC URL (`BASE_MAINNET_RPC_URL`) so S3 can confirm a plain contract may hold real NVDA (Base docs say secondary holding is permissionless) and the shadow panel can add a pool quote
 - [ ] Fund a deployer wallet (key generated in WSL straight into `.env`, address only shown) → Sepolia tx hashes for S1 (create token, schedule split), S2 (transfer in/out), S4 (reverted tx)
 - [ ] S3 real-token checks: token addresses, NAV vs feed vs DEX, real policy for a contract, corporate-action lead times — needs a provider RPC URL in `.env` (`BASE_MAINNET_RPC_URL`) or a network where `api.coinbase.com` loads
 - [x] Decide API-CONTRACT §9 items D1–D11 — all recommended options, applied to the SRD
 - [ ] Choose the LLM provider and budget (SRD open question)
-- [ ] Ask the partner Telegram groups for judging criteria and build-in-public rules (only Nalen518 can)
+- [x] Judging criteria settled: the official rules only (equal weights, rules §6–7; testnet not penalised). Partner prizes out of focus for now
+- [x] Idea validation pass applied: hybrid research weights, cut order, S3 data in the pitch, free-form attacks first, persona and test-stock naming
+- [ ] Persona eligibility: confirm one jurisdiction where Coinbase tokenized stocks are offered (country list not published; coinbase.com blocked on this network)
 - [ ] Get a provider RPC (Alchemy / CDP) for Base Sepolia — the agent needs it anyway (SRD §11)
 
 ---
@@ -98,7 +101,8 @@ Can start now; no code dependency.
 - [ ] Trenggiling mascot: 5 poses as SVG — walking, peeking, half-curled, curled with error tag, sleeping (SRD §4.4); readable without text (NFR-10)
 - [ ] Copy: every error's receipt text (API-CONTRACT §2.4), labels, empty states
 - [ ] Design tokens (colour, type, spacing), light and dark, mobile width
-- [ ] Review against the 2 min 15 s video script (G3)
+- [ ] Review against the 2 min 15 s video script (G3), which opens with the real S3 weekend-freeze data
+- [ ] Test-stock labels: "Pango Test NVDA — not NVIDIA stock" style, no implied endorsement (FR-W7, rules §6)
 
 ## P4 — Slicing: frontend from the design (Nov 25 – Dec 1, proposed)
 
@@ -109,7 +113,7 @@ Static components with mock data first, then wire in P6.
 - [ ] Mandate form with validation and hints
 - [ ] Portfolio view with drift highlight and owner bounds
 - [ ] Research viewer
-- [ ] Chat panel and attack console
+- [ ] Chat panel and attack console: free-text "try to trick it" box first, 6 presets as shortcuts
 - [ ] Receipt log: time, action, amount, result, error name, plain-English reason, tx link per attempt (US-06)
 - [ ] Mascot component driven by a `pose` prop (priority order API-CONTRACT §5)
 - [ ] Not-real-yet panel, shadow panel, compliance notice
@@ -128,8 +132,9 @@ Interfaces: API-CONTRACT §4. Python, FastAPI, web3.py.
 - [ ] Endpoints: `/health`, `/config`, `/chat`, `/news`, `/attacks`, `/attacks/{id}`, `/attempts`, `/attempts/{id}`, `/research/current`, `/research/{hash}/report.json`, `/loop`, `/admin/*` — §4.2
 - [ ] LLM proposal step (stock, side, amount, rationale; never decides safety) — FR-A2
 - [ ] Fact-check of split / dividend claims from `effectiveAt` / `newUIMultiplier` — FR-A3, US-12
-- [ ] 6 attack presets with their scenario setup — US-13
-- [ ] Research: signal snapshot, versioned scoring function, LLM thesis, canonical JSON, `setTargets` with hash — FR-A7, US-16, §4.5 *(cut candidate on Nov 28)*
+- [ ] Free-form attack endpoint (`/attacks/freeform`) plus 6 preset shortcuts with their scenario setup — US-13
+- [ ] Research (hybrid): signal snapshot, versioned scoring → baseline, LLM proposal with cited reasons, clamp to baseline ± `llmBandBps` and bounds, canonical JSON, `setTargets` with hash — FR-A7, US-16, §4.5 *(cut #4 on Nov 28)*
+- [ ] Band checker: baseline recomputes and every final weight is inside its band (shared with the web viewer) — US-19, AT-14
 - [ ] Rebalance loop every 5 min, smallest trade set, waits on pending corporate actions — FR-A8, US-17, AT-17
 - [ ] Ticker → test-token mapping; mainnet addresses only in the read-only shadow config — FR-A9
 - [ ] Optional Tokenized Stocks API client (5 s timeout, `unavailable` on failure) — §6.3
@@ -180,10 +185,11 @@ Interfaces: API-CONTRACT §4. Python, FastAPI, web3.py.
 
 ## P9 — Submission (Dec 3–5)
 
-- [ ] Video script and recording, 2 min 15 s — G3, AT-12
+- [ ] Video script and recording, 2 min 15 s, opening with the real S3 data — G3, AT-12
 - [ ] README: what it is, deployed addresses, how to run, what is not real yet — NFR-9
 - [ ] Repo public, no secrets (scan before release)
-- [ ] X post (build-in-public rules from the Telegram groups)
+- [ ] **Required:** public X post with the video demo, tagging @buildonbase (rules §5.1)
+- [ ] **Required:** submission form — X post link, track "Agentic Stock Finance", and a clear description of what was built during the quest period (rules §5, §6.2)
 - [ ] Merge `Development` → `main` when Nalen518 approves
 - [ ] Submit on the Stocks Maxxing page by Dec 5
 - [ ] Keep agent, DB and gas funded during judging
