@@ -4,6 +4,13 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — spike S2 findings**
+
+- Invariant test (section 8) now excludes issuer seizure and policy freezes, which no holder contract can prevent.
+- NFR-8 "what is not real yet" panel states that real stocks follow issuer transfer rules and can be clawed back.
+- Error table adds `PolicyForbids` with the receipt text "The stock's issuer does not allow this transfer right now".
+- Runbook step 4: tNVDA and tAAPL need no allowlist setup (default policies allow the vault).
+
 **Nov 16, 2026 — gap review**
 
 - Spike S3 also checks whether a contract may hold real NVDA (policy registry) and reads real corporate-action lead times; dividend threshold `minMultiplierChangeBps` is only a fallback, default stays "block every pending update" (US-09).
@@ -301,6 +308,7 @@ Sell mirrors steps 1, 2, 4, 5, then checks `soldToday + usdValue > dailySellCapU
 | `CorporateActionPending` | A split or dividend adjustment is scheduled; trading waits until it takes effect |
 | `AboveFairValue` / `BelowFairValue` | The price is too far from the reference price |
 | `ExceedsShareCap` | This would put you over your share limit |
+| `PolicyForbids(policyScope, policyId)` (from the B20 token, bubbled up) | The stock's issuer does not allow this transfer right now |
 
 Ownership and pause errors and events come from OpenZeppelin v5 (`OwnableUnauthorizedAccount`, `EnforcedPause`, `Paused(account)`, `Unpaused(account)`); we do not redeclare them, because a custom `Paused` error would clash with OZ's `Paused` event and fail to compile.
 
@@ -356,7 +364,7 @@ The bar is: a stolen agent key or a fooled model can lose nothing outside the ma
 | NFR-5 | Correctness | All prices normalised to 18 decimals inside the contract; feed 8 decimals, USDC 6, B20 per its `decimals()`. Unit tests cover each conversion. |
 | NFR-6 | Performance | Typed command to submitted transaction under 15 s on Base Sepolia (LLM call included); dashboard refresh every block or 4 s. |
 | NFR-7 | Reliability | Executor manages nonces and retries a dropped transaction once; one attempt never sends twice (idempotency key per attempt). |
-| NFR-8 | Honesty | Test assets labelled everywhere (FR-W7); a "what is not real yet" panel lists mocks, as HelloFugu does. |
+| NFR-8 | Honesty | Test assets labelled everywhere (FR-W7); a "what is not real yet" panel lists mocks, as HelloFugu does. The panel also states: "Real tokenized stocks follow their issuer's transfer rules and can be frozen or clawed back by the issuer; the vault can hold a real stock only if the issuer's policy authorizes its address." |
 | NFR-9 | Verifiability | All contracts verified on sepolia.basescan.org; repo public with README and deployed addresses. |
 | NFR-10 | Usability | Every error shown with its plain-English reason (section 5); mascot pose readable without text. |
 | NFR-11 | Compliance | App states: test network only, not financial advice; Coinbase tokenized stocks are for eligible non-US persons. |
@@ -384,7 +392,7 @@ We deploy on Base Sepolia with B20 test stocks that we issue ourselves, so we co
 1. Install Base's Foundry build; `base-forge install base/base-std` and OpenZeppelin.
 2. Create two wallets: owner and agent. Fund both from a Base Sepolia faucet; agent needs gas only.
 3. Run `script/Deploy.s.sol`: tUSDC → test stocks via the B20 factory → feeds → StockSwap → PangoVault.
-4. Run `script/Seed.s.sol`: mint tUSDC to owner, mint stocks into StockSwap, set feed prices, set StockSwap price equal to the feed.
+4. Run `script/Seed.s.sol`: mint tUSDC to owner, mint stocks into StockSwap, set feed prices, set StockSwap price equal to the feed. No allowlist setup is needed: tNVDA and tAAPL keep every policy slot at `0` (always allow), so the vault and StockSwap can hold and move them (spike S2).
 5. Owner configures the vault from the web app (US-01) and deposits 500 tUSDC (US-02).
 6. Verify every contract on sepolia.basescan.org; write the addresses into the README and the app config.
 7. Run the scenario scripts below; confirm each produces its expected result on Basescan.
@@ -419,7 +427,7 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 | --- | --- | --- | --- |
 | Unit | base-forge test on base-anvil | Each check and each custom error, decimals conversion | 1 test per error, 100% of vault functions |
 | Fuzz | base-forge fuzz | Caps and band math hold for random amounts and prices | 1,000 runs per property |
-| Invariant | base-forge invariant | Funds leave the vault only to the owner or into a swap at fair value | 0 violations |
+| Invariant | base-forge invariant | Funds leave the vault only to the owner or into a swap at fair value, except through the token issuer's `seizeWithMemo` or a transfer-policy freeze, which no holder contract can prevent (spike S2). Run on our own test stocks with default policies, where we hold the issuer roles and never use them | 0 violations |
 | Scenario | Scripts in section 7 on base-anvil, then Sepolia | Each demo lever produces its expected result | All 7 scripts (`ResetDay` on base-anvil only) |
 | Attack suite | Agent service + prompt-injection texts | The model can be fooled, the vault still blocks | At least 20 attacks, 20 blocked |
 | End to end | Web app on Sepolia, manual | A judge's path works from a fresh browser | Section 8 checklist all ticked |
