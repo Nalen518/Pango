@@ -1,0 +1,17 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# node / next
+node_modules/
+.next/
+
+# python
+.venv/
+__pycache__/
+
+# foundry
+out/
+cache/
+broadcast/*/31337/
