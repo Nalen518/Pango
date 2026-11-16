@@ -5,7 +5,7 @@
 | S1 B20 multiplier | PASS (local) · Sepolia tx hashes pending | Pending split is readable from a contract; Sepolia supports it |
 | S2 Vault holds B20 | PASS (local) · Sepolia tx hashes deferred | A contract can pull, hold and send our test stock; allowlists and issuer seizure behave as documented |
 | S3 Fair-value units | PARTIAL · rest deferred (API blocked, public RPC rate-limited) | Feeds read: 8 decimals, ~50 h weekend freeze; units and real-token checks need the Coinbase API |
-| S4 Revert decode | not started | |
+| S4 Revert decode | PASS (local) · Sepolia tx hash deferred | web3.py decodes custom errors from eth_call and can broadcast the reverting tx |
 | S5 Weight math | not started | |
 
 ## S1 — B20 asset token, scheduled split, read from a contract
@@ -135,3 +135,32 @@ Feed addresses from https://docs.base.org/build-on-base/integrate-defi/list-toke
 - Hold the units change (FR-V5, FR-V12: feed per UI share vs per raw token) until item 1 is answered. For the testnet demo this is our choice: our `MockAggregatorV3` reports USDC per UI share, as the SRD says, labelled in the UI.
 
 **Deferred (Nov 16):** items 1–4 wait for a provider RPC URL in `.env` (`BASE_MAINNET_RPC_URL`) or a network where `api.coinbase.com` loads. Nothing in the testnet demo depends on them.
+
+## S4 — Can the agent decode custom errors and broadcast a reverting tx?
+
+**Verdict:** PASS on a local base-anvil node (chain 31337). Sepolia tx hash deferred (same funded-wallet step as S1/S2).
+
+**What we did** — `spikes/s4-revert-decode/Reverter.sol` (reverts with `AboveFairValue(uint256,uint256)`, `CorporateActionPending(uint256)`, `EnforcedPause()`) and `s4.py`, run with the agent's environment: `uv run --project agent python spikes/s4-revert-decode/s4.py`. The script refuses any chain other than 31337 or 84532 and uses anvil's unlocked dev account (no private key).
+
+1. Preflight: `contract.functions.buy(mode).call()` → web3.py 8 raises `ContractCustomError`; `e.data` is the raw revert data. A selector table built from the contract ABI (`keccak(name(types))[:4]`) plus `eth_abi.decode` gives the error name and arguments.
+2. Broadcast anyway: `transact({"gas": 100_000})` — passing `gas` skips `estimate_gas`, which would otherwise refuse a reverting call. The node mines it with `status 0`.
+
+**Measured**
+
+| Mode | Preflight decoded | Broadcast | Gas used |
+| --- | --- | --- | --- |
+| 1 | `AboveFairValue(paidPrice=105e18, maxPrice=101e18)` | mined, status 0 | 22,145 |
+| 2 | `CorporateActionPending(effectiveAt=1795000000)` | mined, status 0 | 21,940 |
+| 3 | `EnforcedPause()` | mined, status 0 | 21,685 |
+| 0 | — (success path) | mined, status 1 | — |
+
+**Surprises / notes**
+
+1. No custom decoding library is needed: the vault's ABI is the error table. The agent should load errors from the vault ABI **plus** errors that can bubble up from other contracts — OpenZeppelin v5 (`OwnableUnauthorizedAccount`, `EnforcedPause`) and B20 (`PolicyForbids`, `AccountNotSeizable`, …) — or bubbled reverts show as "unknown error".
+2. A reverted tx costs about 22k gas here (cheap revert at the top); a real vault revert after the swap (`AboveFairValue` at step 7) will cost more. Budget agent gas for proof-mode reverts (NFR-12).
+3. `estimate_gas` is what blocks broadcasting a failing tx; setting `gas` explicitly is enough. Proof mode must stay testnet-only (the script's chain-id guard is the pattern to copy).
+
+**Recommended SRD changes**
+
+- FR-A4: name the mechanism — "preflight with `eth_call`, decode the revert against an error table built from the vault ABI plus OpenZeppelin and B20 errors; in proof mode broadcast with an explicit gas limit (skipping `estimate_gas`) after a chain-id check that allows only 84532."
+- Section 9 S4 fallback ("show preflight result only, labelled simulated") is not needed on testnet; keep it as the NFR-12 budget fallback.
