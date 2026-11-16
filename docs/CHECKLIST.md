@@ -40,15 +40,11 @@ Nov 16, 2026 · tracks every phase from setup to submission (deadline **Dec 5, 2
 
 ### Still open
 
-- [ ] **Before the Nov 23 freeze:** add a provider RPC URL (`BASE_MAINNET_RPC_URL`) so S3 can confirm a plain contract may hold real NVDA (Base docs say secondary holding is permissionless) and the shadow panel can add a pool quote
-- [ ] Fund a deployer wallet (key generated in WSL straight into `.env`, address only shown) → Sepolia tx hashes for S1 (create token, schedule split), S2 (transfer in/out), S4 (reverted tx)
-- [ ] S3 real-token checks: token addresses, NAV vs feed vs DEX, real policy for a contract, corporate-action lead times — needs a provider RPC URL in `.env` (`BASE_MAINNET_RPC_URL`) or a network where `api.coinbase.com` loads
 - [x] Decide API-CONTRACT §9 items D1–D11 — all recommended options, applied to the SRD
-- [ ] Choose the LLM provider and budget (SRD open question)
 - [x] Judging criteria settled: the official rules only (equal weights, rules §6–7; testnet not penalised). Partner prizes out of focus for now
 - [x] Idea validation pass applied: hybrid research weights, cut order, S3 data in the pitch, free-form attacks first, persona and test-stock naming
 - [x] Persona eligibility: Indonesia is eligible (confirmed by Nalen518); persona stays in Jakarta
-- [ ] Get a provider RPC (Alchemy / CDP) for Base Sepolia — the agent needs it anyway (SRD §11)
+- [ ] Provider RPC, funded deployer wallet, LLM provider → **deferred to backend wiring** (decided Nov 16), see "Carry-over from P0" at the top of P6
 
 ---
 
@@ -141,6 +137,14 @@ Interfaces: API-CONTRACT §4. Python, FastAPI, web3.py.
 - [ ] Tests: decoder, idempotency, scoring reproducibility, chain-id guard
 
 ## P6 — Backend integration (Nov 27 – Dec 1)
+
+### Carry-over from P0 (deferred Nov 16, resume here)
+
+- [ ] **Provider RPC URLs** (Alchemy / CDP) in `.env`: `BASE_SEPOLIA_RPC_URL` for the agent (public RPC is rate-limited) and `BASE_MAINNET_RPC_URL` (read-only). Unblocks the S3 real-token checks: token addresses, NAV vs feed vs DEX, whether a plain contract may hold real NVDA (Base docs say secondary holding is permissionless), corporate-action lead times — and the shadow panel's pool quote
+- [ ] **Funded deployer wallet** (key generated in WSL straight into `.env`, address only shown) → Sepolia tx hashes for S1 (create token, schedule split), S2 (transfer in/out), S4 (reverted tx). The P2 Sepolia deployment also needs it, so fund it then at the latest
+- [ ] **LLM provider and budget** (SRD open question) — needed by the P5 proposal and research steps
+
+Note: the vault freezes Nov 23, before this. If the S3 check later shows a contract cannot hold real stocks, the testnet demo is unaffected; record it in the "what is not real yet" panel (NFR-8).
 
 - [ ] wagmi config: `baseSepolia`, `baseAccount({ appName, appLogoUrl })`, `injected()` — §5
 - [ ] Chain reads every block / 4 s for dashboard, portfolio, mascot — FR-W3, FR-W8, NFR-6
