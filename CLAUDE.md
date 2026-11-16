@@ -9,6 +9,7 @@ Spec: `docs/Pango-SRD.md`. Current phase brief: `docs/Pango-subagent-prompt.md`.
 - Nalen518 is the **only** contributor. Never add Claude (or anyone else) as co-author or contributor:
   no `Co-Authored-By:` trailers in commits, no "Generated with Claude Code" lines in PRs, issues, README or docs.
 - Commits use the existing git identity (Nalen518); never change it.
+- Branches: all work happens on `Development` (capital D, matches the remote). `main` holds only ready-to-deploy code; never commit to `main` directly. Merge `Development` → `main` only when Nalen518 asks.
 
 ## Environment
 

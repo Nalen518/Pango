@@ -1,0 +1,15 @@
+# Throwaway spike project. Reuses the libraries installed in ../contracts/lib.
+# Run from WSL: cd spikes && base-forge test -vv
+[profile.default]
+src = "."
+test = "."
+script = "."
+out = "out"
+cache_path = "cache"
+libs = ["../contracts/lib"]
+allow_paths = ["../contracts/lib"]
+remappings = [
+    "forge-std/=../contracts/lib/forge-std/src/",
+    "base-std/=../contracts/lib/base-std/src/",
+    "@openzeppelin/contracts/=../contracts/lib/openzeppelin-contracts/contracts/",
+]

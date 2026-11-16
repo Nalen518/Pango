@@ -18,7 +18,7 @@ Spec: [docs/Pango-SRD.md](docs/Pango-SRD.md)
 
 | Tool | Version |
 | --- | --- |
-| base-forge / base-cast / base-anvil | 1.6.0-v1.1.0 (commit `6130ccf`) |
+| base-forge / base-cast / base-anvil | 1.6.0-v1.5.1 (commit `571865d`); v1.1.0 lacks the Cobalt split functions |
 | solc | 0.8.35 |
 | Python (uv-managed) | 3.11.17, uv 0.13.5 |
 | Node / pnpm | 24.16.0 / 11.9.0 |
@@ -28,11 +28,12 @@ Spec: [docs/Pango-SRD.md](docs/Pango-SRD.md)
 
 1. Install WSL2 with Ubuntu: `wsl --install -d Ubuntu` (admin PowerShell, then reboot).
 2. In WSL, install Base's Foundry build:
-   `curl -L https://raw.githubusercontent.com/base/base-anvil/HEAD/foundryup/install | bash`, open a new shell, run `base-foundryup`.
+   `curl -L https://raw.githubusercontent.com/base/base-anvil/HEAD/foundryup/install | bash`, open a new shell, run `base-foundryup --install v1.5.1`.
 3. Clone with submodules: `git clone --recurse-submodules https://github.com/Nalen518/Pango.git`
 4. Copy `.env.example` to `.env` and fill in testnet values.
 5. Contracts (in WSL): `cd contracts && base-forge test`
 6. Agent (Windows): `cd agent && uv sync && uv run agent` → http://127.0.0.1:8000/health
 7. Web (Windows): `cd web && pnpm install && pnpm dev` → http://localhost:3000
+8. Spikes (in WSL): `cd spikes && base-forge test -vv`; results in [docs/SPIKES.md](docs/SPIKES.md)
 
 Stock `forge` can't run B20 precompiles; always use the `base-` commands for contracts.
