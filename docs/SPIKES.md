@@ -3,7 +3,7 @@
 | Spike | Verdict | One line |
 | --- | --- | --- |
 | S1 B20 multiplier | PASS (local) · Sepolia tx hashes pending | Pending split is readable from a contract; Sepolia supports it |
-| S2 Vault holds B20 | not started | |
+| S2 Vault holds B20 | PASS (local) · Sepolia tx hashes deferred | A contract can pull, hold and send our test stock; allowlists and issuer seizure behave as documented |
 | S3 Fair-value units | not started | |
 | S4 Revert decode | not started | |
 | S5 Weight math | not started | |
@@ -50,4 +50,43 @@
 - Check step 5 and FR-V4: name the real calls — `effectiveAt()` / `newUIMultiplier()`, never `effectiveAt() != 0`.
 - Section 7 runbook step 1 and the README: pin Base's Foundry build to **v1.5.1**.
 
-**Still to do for S1 (deferred by choice, Nov 16):** broadcast token creation and the split schedule on Sepolia to record two tx hashes. Needs a funded deployer address; the `eth_call` simulation above already shows both calls succeed on Sepolia.
+**S1 Sepolia step deferred by choice (Nov 16):** broadcast token creation and the split schedule on Sepolia to record two tx hashes. Needs a funded deployer address; the `eth_call` simulation above already shows both calls succeed on Sepolia.
+
+## S2 — Can the vault (a contract) receive, hold and send B20 stock?
+
+**Verdict:** PASS on base-anvil (live Rust precompiles), 3/3 tests in `spikes/s2-vault-holds-b20/S2.t.sol`. Sepolia tx hashes deferred (same funded-deployer step as S1).
+
+**What we did**
+
+- `VaultProbe` contract (stand-in for PangoVault) with `pull` (`transferFrom` owner → vault, vault is the executor) and `send` (`transfer` vault → anyone).
+- Test 1, default policies: owner approves, vault pulls 4 shares, sends 1 out, receives a direct mint.
+- Test 2, real-stock-style allowlist: issuer sets `TRANSFER_RECEIVER_POLICY` to an allowlist without the vault → transfer to the vault reverts; issuer adds the vault → it works.
+- Test 3, issuer seizure: `seizeWithMemo` from the vault.
+
+**Exact interfaces used**
+
+| Purpose | Call |
+| --- | --- |
+| Policy slot of a token | `IB20.policyId(bytes32 scope)`; scopes `TRANSFER_SENDER_POLICY`, `TRANSFER_RECEIVER_POLICY`, `TRANSFER_EXECUTOR_POLICY`, `MINT_RECEIVER_POLICY`, `SEIZE_EXEMPT_POLICY`, `SEIZE_RECEIVER_POLICY` (`keccak256` of the name, in `B20Constants`) |
+| Set a slot (token admin) | `IB20.updatePolicy(bytes32 scope, uint64 policyId)` |
+| Registry (`0x8453…0002`) | `policyExists(uint64)`, `isAuthorized(uint64, address)`, `createPolicyWithAccounts(admin, PolicyType, address[])`, `updateAllowlist(uint64, bool, address[])` |
+| Blocked transfer error | `PolicyForbids(bytes32 policyScope, uint64 policyId)` |
+| Issuer clawback | `seizeWithMemo(from, to, amount, memo)` — needs `SEIZE_ROLE`; error `AccountNotSeizable(account)` |
+
+**Measured**
+
+- Every unset slot reads `0` = built-in always-allow. `policyExists(0)` = true, `isAuthorized(0, vault)` = true.
+- Allowlist without the vault: `isAuthorized(id, vault)` = false and `transfer` → `PolicyForbids(TRANSFER_RECEIVER_POLICY, id)`; after `updateAllowlist(id, true, [vault])` the transfer succeeds.
+- `transferFrom` by the vault is checked against `TRANSFER_EXECUTOR_POLICY` (vault is `msg.sender`), `TRANSFER_SENDER_POLICY` (owner) and `TRANSFER_RECEIVER_POLICY` (vault). A real stock could block the vault at any of the three.
+
+**Surprises**
+
+1. **Seizure is off by default.** `SEIZE_EXEMPT_POLICY = 0` (always allow) makes every account exempt, so even a `SEIZE_ROLE` holder gets `AccountNotSeizable`. Only after the issuer points `SEIZE_EXEMPT_POLICY` at a blocklist naming the vault can it move stock out of the vault, without the vault's consent.
+2. Policies are live: changing a slot takes effect on the next transfer, so an issuer can freeze a vault at any time (not just at deposit).
+
+**Recommended SRD changes**
+
+- Section 8 *Invariant* — "Funds leave the vault only to the owner or into a swap at fair value" → add "…except by the token issuer's `seizeWithMemo` or a policy freeze, which no holder contract can prevent; for our test stocks we hold that role and never use it." Keep the invariant test on our own tokens with default policies.
+- NFR-8 "what is not real yet" panel — add: "Real tokenized stocks are subject to the issuer's transfer policies and clawback; the vault works only if Coinbase's policy authorizes its address (spike S3 checks this on mainnet)."
+- FR-V6 / sell path — map `PolicyForbids(scope, id)` to a plain-English receipt line: "The stock's issuer does not allow this transfer right now."
+- Runbook (section 7): no allowlist setup is needed for tNVDA/tAAPL; default policies let the vault and StockSwap hold them.
