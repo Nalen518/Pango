@@ -11,7 +11,7 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 - Pitch leads with real S3 data (49 h NVDA weekend freeze, +2.5% reopen) in the Problem section, G3 and section 9.
 - Attack console: free-text "try to trick it" is the hero, the 6 presets are shortcuts (US-13, FR-W4).
 - Track claim softened to the page's actual wording; judging = official rules only (equal weights, §6 requirements, testnet not penalised); entry needs an X post tagging @buildonbase and the submission form.
-- Persona no longer names Jakarta (Indonesia eligibility unconfirmed; ISP blocks Coinbase domains). Test-stock names make clear they are not the real companies' shares (FR-W7).
+- Persona stays in Jakarta: Indonesia is eligible (confirmed by Nalen518); the app must still work when Indonesian ISPs block Coinbase domains. Test-stock names make clear they are not the real companies' shares (FR-W7).
 - S3(b) lead recorded: Base docs say secondary holding is permissionless; verify onchain before the freeze.
 
 **Nov 16, 2026 — API contract decisions D1–D11 (see `docs/API-CONTRACT.md` §9)**
@@ -106,7 +106,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 
 | Persona | Who | Wants | Fears |
 | --- | --- | --- | --- |
-| Owner (Rina) | Non-US retail investor holding tokenized stocks, living in a jurisdiction where Coinbase tokenized stocks are offered (Base docs: "eligible jurisdictions outside of the U.S."; no country list published). We no longer name Jakarta: Indonesian ISPs block Coinbase domains (observed Nov 16) and Indonesia's eligibility is unconfirmed | An agent that trades for her while she sleeps | Losing money to a hallucination, a fake headline or a weekend markup |
+| Owner (Rina) | Non-US retail investor holding tokenized stocks, e.g. in Jakarta. Indonesia is an eligible jurisdiction for Coinbase tokenized stocks (confirmed by Nalen518, Nov 16; Base docs only say "eligible jurisdictions outside of the U.S."). Note: some Indonesian ISPs block Coinbase web domains (observed Nov 16), so the app and agent must not depend on `api.coinbase.com` being reachable | An agent that trades for her while she sleeps | Losing money to a hallucination, a fake headline or a weekend markup |
 | Agent builder (Dimas) | Developer running a trading agent (own key or Bankr wallet) | Plug his agent into hard limits without rewriting it | His agent's key leaking and being drained |
 | Judge | Hackathon judge, 2 min 15 s video plus a live try on our shared demo vault (agent side only: chat and attack console, no wallet or owner rights needed) | Proof the rules hold outside the model | A demo that only works because of a prompt |
 

@@ -47,7 +47,7 @@ Nov 16, 2026 · tracks every phase from setup to submission (deadline **Dec 5, 2
 - [ ] Choose the LLM provider and budget (SRD open question)
 - [x] Judging criteria settled: the official rules only (equal weights, rules §6–7; testnet not penalised). Partner prizes out of focus for now
 - [x] Idea validation pass applied: hybrid research weights, cut order, S3 data in the pitch, free-form attacks first, persona and test-stock naming
-- [ ] Persona eligibility: confirm one jurisdiction where Coinbase tokenized stocks are offered (country list not published; coinbase.com blocked on this network)
+- [x] Persona eligibility: Indonesia is eligible (confirmed by Nalen518); persona stays in Jakarta
 - [ ] Get a provider RPC (Alchemy / CDP) for Base Sepolia — the agent needs it anyway (SRD §11)
 
 ---
