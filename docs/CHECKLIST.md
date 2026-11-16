@@ -42,7 +42,7 @@ Nov 16, 2026 · tracks every phase from setup to submission (deadline **Dec 5, 2
 
 - [ ] Fund a deployer wallet (key generated in WSL straight into `.env`, address only shown) → Sepolia tx hashes for S1 (create token, schedule split), S2 (transfer in/out), S4 (reverted tx)
 - [ ] S3 real-token checks: token addresses, NAV vs feed vs DEX, real policy for a contract, corporate-action lead times — needs a provider RPC URL in `.env` (`BASE_MAINNET_RPC_URL`) or a network where `api.coinbase.com` loads
-- [ ] Decide API-CONTRACT §9 items D1–D11 before the vault freeze
+- [x] Decide API-CONTRACT §9 items D1–D11 — all recommended options, applied to the SRD
 - [ ] Choose the LLM provider and budget (SRD open question)
 - [ ] Ask the partner Telegram groups for judging criteria and build-in-public rules (only Nalen518 can)
 - [ ] Get a provider RPC (Alchemy / CDP) for Base Sepolia — the agent needs it anyway (SRD §11)

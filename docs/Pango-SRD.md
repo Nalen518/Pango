@@ -4,6 +4,15 @@ Nov 15, 2026 · Radit (@Apa) · revised Nov 16, 2026 (see Changelog)
 
 ### Changelog
 
+**Nov 16, 2026 — API contract decisions D1–D11 (see `docs/API-CONTRACT.md` §9)**
+
+- D1: `maxShares` is in the token's own decimals, not always 18.
+- D2: US-01 / AT-01 — the owner configures the deployed demo vault; no vault factory.
+- D3: US-15 — weight bounds and tolerance emit `WeightBoundsUpdated` / `ToleranceUpdated`.
+- D4: US-09 — no dividend threshold in v1; every pending update blocks.
+- D5: FR-W10 — v1 shadow panel is feed-only (real price and age); pool quote waits for S3.
+- D11: section 5 now points to API-CONTRACT.md as the single source of truth for the vault interface.
+
 **Nov 16, 2026 — spike S1 and S5 findings**
 
 - Section 5 *Known limit* replaced: announcements are atomic, the vault reads `effectiveAt() > block.timestamp` (never `!= 0`); check step 5 and FR-V4 name the call; open question on the announcement window closed.
@@ -93,7 +102,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 
 | ID | Story | Acceptance criteria |
 | --- | --- | --- |
-| US-01 | As an owner, I create a vault and set my mandate so the agent has clear limits. | Given a connected wallet on Base Sepolia, when I submit stocks, per-trade cap, daily cap, share caps and price bands, then the vault stores them and emits `MandateUpdated`; only my address can change them. |
+| US-01 | As an owner, I configure the deployed vault and set my mandate so the agent has clear limits. | Given a connected wallet on Base Sepolia and the vault deployed by our script (no vault factory, FR-W1), when I submit stocks, per-trade cap, daily cap, share caps and price bands, then the vault stores them and emits `MandateUpdated` / `StockConfigured`; only my address can change them. |
 | US-02 | As an owner, I deposit test USDC so the agent can trade. | Deposit moves USDC into the vault; the dashboard shows the new balance within one block. |
 | US-03 | As an owner, I withdraw any time, even when the agent is misbehaving. | `withdraw` works while paused; funds go only to the owner address; any other caller reverts `OwnableUnauthorizedAccount`. |
 | US-04 | As an owner, I pause the agent with one click. | After `pause`, every `buy`/`sell` reverts `EnforcedPause`; withdraw still works; the mascot shows the sleeping pose. |
@@ -106,7 +115,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 | --- | --- | --- |
 | US-07 | As the agent, I buy a stock within the mandate. | Given price within band, fresh feed, no pending corporate action and caps not hit, `buy` executes and emits `TradeExecuted`. |
 | US-08 | As the agent, I am stopped from paying above fair value. | If the swap delivers fewer tokens than the oracle-based minimum, the call reverts `AboveFairValue(paidPrice, maxPrice)`. Same for selling below fair value: `BelowFairValue`. |
-| US-09 | As the agent, I am stopped from trading through a corporate action. | While the stock has a scheduled multiplier update not yet effective, `buy` and `sell` revert `CorporateActionPending(effectiveAt)`. Default: every pending update blocks. Only if spike S3 shows real pending windows longer than a day, the owner may set `minMultiplierChangeBps` so smaller (dividend) adjustments don't block. |
+| US-09 | As the agent, I am stopped from trading through a corporate action. | While the stock has a scheduled multiplier update not yet effective, `buy` and `sell` revert `CorporateActionPending(effectiveAt)`. Every pending update blocks, dividends included. A `minMultiplierChangeBps` threshold for small dividend adjustments is out of v1; revisit only if spike S3 later shows real pending windows longer than a day. |
 | US-10 | As the agent, I am held to a tighter band when the price is stale. | Feed older than `maxStaleness` uses `staleBandBps`; older than `hardStaleLimit` reverts `StaleOracle`. |
 | US-11 | As the agent, I cannot exceed share, per-trade or daily caps, or trade unlisted tokens. | Reverts `ExceedsShareCap`, `ExceedsPerTradeCap`, `ExceedsDailyCap`, `TokenNotAllowed` respectively; daily cap resets at 00:00 UTC. |
 | US-12 | As the agent, I fact-check stock news against the chain before acting. | For a split or dividend claim, the agent reads the token's pending multiplier update and reports "verified onchain" or "unverified" with the evidence. |
@@ -122,7 +131,7 @@ Nineteen user stories cover three personas; each acceptance criterion maps to a 
 
 | ID | Story | Acceptance criteria |
 | --- | --- | --- |
-| US-15 | As an owner, I set a minimum and maximum weight per stock, a tolerance and a drift trigger, so the agent's portfolio stays inside my comfort zone. | Owner stores `minWeightBps`, `maxWeightBps` per stock and `toleranceBps`, `driftTriggerBps` for the vault; only the owner can change them; emits `MandateUpdated`. |
+| US-15 | As an owner, I set a minimum and maximum weight per stock, a tolerance and a drift trigger, so the agent's portfolio stays inside my comfort zone. | Owner stores `minWeightBps`, `maxWeightBps` per stock and `toleranceBps`, `driftTriggerBps` for the vault; only the owner can change them; emits `WeightBoundsUpdated` / `ToleranceUpdated`. |
 | US-16 | As the agent, I turn research into target weights and commit them onchain. | The agent records a signal snapshot per stock (feed momentum, premium over NAV, pending corporate actions, news items with URL and timestamp), a fixed scoring function turns it into weights, the LLM writes the thesis explaining them, and the agent calls `setTargets(tokens, weightsBps, researchHash)`; the vault stores them and emits `TargetsSet`. |
 | US-17 | As the agent, I rebalance when the portfolio drifts. | When any stock's weight differs from its target by more than `driftTriggerBps` (absolute percentage points of portfolio weight), the agent buys or sells until it is within `toleranceBps`; every trade still passes all section 5 checks. |
 | US-18 | As the agent, I cannot rewrite the portfolio outside the owner's bounds or overshoot my own targets. | A target outside `[minWeightBps, maxWeightBps]` or summing over 100% reverts `TargetOutOfBounds`; a trade that pushes a stock past target ± tolerance reverts `OvershootsTarget`. |
@@ -248,12 +257,14 @@ The pose is computed from chain reads and the last attempt, never from the LLM.
 | FR-A8 | Rebalance loop: every 5 minutes (configurable) read weights; if drift > trigger, plan the smallest set of trades that restores tolerance and send them one by one. | US-17 |
 | FR-W8 | Portfolio view: target vs current weight per stock with drift highlighted, plus the owner's bounds. | US-15, US-17 |
 | FR-W9 | Research viewer: the report behind the current targets, with a hash check against the onchain `researchHash`. | US-19 |
-| FR-W10 | Mainnet shadow panel (read-only, no wallet, no transactions): for NVDA and AAPL, shows the real feed price, a real pool quote and the premium between them, labelled e.g. "On mainnet right now this buy would be blocked: premium 3.8%". Proves the problem is real while every trade stays on Base Sepolia. | G2, G3 |
+| FR-W10 | Mainnet shadow panel (read-only, no wallet, no transactions). v1: for NVDA and AAPL, shows the real Coinbase feed price and its age (e.g. "frozen 49 h over the weekend"), from the feed addresses in API-CONTRACT §6.2. Later, once spike S3's token and pool addresses are known: add a real pool quote and the premium between them, labelled e.g. "On mainnet right now this buy would be blocked: premium 3.8%". Proves the problem is real while every trade stays on Base Sepolia. | G2, G3 |
 | FR-A9 | Ticker mapping: research uses real tickers from the Tokenized Stocks API (NVDA, AAPL); trades use our Base Sepolia test tokens (tNVDA, tAAPL) through a config table keyed by ticker. Mainnet contract addresses from the API are never written to vault or agent config. The only mainnet addresses in the codebase live in a separate read-only shadow config (FR-W10) that the signer, executor and vault config never load. The app labels this: "Research uses real market data; trades use test stocks on Base Sepolia." | US-16, G4 |
 
 ## 5. Smart contract interface
 
-PangoVault is one non-upgradeable contract of roughly 200 lines, built on OpenZeppelin (`Ownable2Step`, `Pausable`, `ReentrancyGuard`, `SafeERC20`) and Base's `base-std` interfaces for B20. Names below are the target; the B20 function used for pending corporate actions is confirmed by spike S1.
+PangoVault is one non-upgradeable contract of roughly 200 lines, built on OpenZeppelin (`Ownable2Step`, `Pausable`, `ReentrancyGuard`, `SafeERC20`) and Base's `base-std` interfaces for B20.
+
+**The exact interface — every function, struct, error argument, event, selector and check order — lives in [`docs/API-CONTRACT.md`](API-CONTRACT.md) §2, which is the single source of truth.** This section keeps the requirements and examples; when the two differ, API-CONTRACT.md wins and this section is updated to match.
 
 ### Mandate and stock configuration
 
@@ -268,7 +279,7 @@ PangoVault is one non-upgradeable contract of roughly 200 lines, built on OpenZe
 | `staleBandBps` | uint16, per stock | 25 (0.25%) | Tighter band when feed is stale |
 | `maxStaleness` | uint32 seconds | 26 h | Older than this = stale mode |
 | `hardStaleLimit` | uint32 seconds | 72 h | Older than this = no trading |
-| `maxShares` | uint256 (18 decimals, UI units) | 0.5 share | Max holding measured with `balanceOfUI`. A split multiplies UI shares, so the owner raises this cap after a split (the mandate form shows that hint) |
+| `maxShares` | uint256 (UI units, in the token's own `decimals()`; 18 for tNVDA/tAAPL) | 0.5 share | Max holding measured with `balanceOfUI`. A split multiplies UI shares, so the owner raises this cap after a split (the mandate form shows that hint) |
 
 ### Functions
 
@@ -447,7 +458,7 @@ The idea counts as working when every acceptance test below passes on Base Sepol
 
 ### Acceptance tests (run on Base Sepolia)
 
-- [ ] AT-01 (US-01, US-02) Owner creates vault, sets mandate, deposits 500 tUSDC; dashboard shows it.
+- [ ] AT-01 (US-01, US-02) Owner configures the deployed vault, sets mandate, deposits 500 tUSDC; dashboard shows it.
 - [ ] AT-02 (US-07) "Buy $20 of tNVDA" with `SetFair` → executes; shares shown via `balanceOfUI`.
 - [ ] AT-03 (US-08) Fake split headline with `SetPremium(4%)` → `AboveFairValue`, Basescan shows the revert.
 - [ ] AT-04 (US-12) Same headline → agent labels the split claim "unverified onchain".

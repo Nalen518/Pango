@@ -49,7 +49,7 @@ struct StockConfig {                         // Proposed field set; values from 
     uint16  staleBandBps;     // stale-feed band, e.g. 25
     uint32  maxStaleness;     // seconds, e.g. 26 h
     uint32  hardStaleLimit;   // seconds, e.g. 72 h
-    uint256 maxShares;        // share cap in UI units, token decimals (see D1)
+    uint256 maxShares;        // share cap in UI units, in the token's own decimals (D1)
 }
 ```
 
@@ -474,9 +474,9 @@ Real Coinbase feeds on Base **mainnet, read-only**, for the shadow panel and S3 
 
 ## 9. Gaps and decisions
 
-Found while writing this contract. Each needs a decision before Phase 1 freezes the vault (Nov 23).
+Found while writing this contract. **All eleven decided Nov 16, 2026 by Nalen518: the recommended option in every row.** The SRD was updated to match (D1, D2, D3, D4, D5, D11); the rest were already written that way here.
 
-| # | Gap | Options | Recommended |
+| # | Gap | Options | Decided |
 | --- | --- | --- | --- |
 | D1 | SRD says `maxShares` is "18 decimals, UI units", but `balanceOfUI` is in the token's own decimals (Spike S5) | (a) state "token decimals" and keep 6–18 allowed; (b) `configureStock` requires 18-decimal tokens | (a), and our test stocks are 18 anyway |
 | D2 | US-01 / AT-01 say the owner *creates* a vault; FR-W1 says no factory | (a) reword: owner *configures* the deployed demo vault; (b) add a factory | (a) |
