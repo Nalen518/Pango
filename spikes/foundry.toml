@@ -8,6 +8,8 @@ out = "out"
 cache_path = "cache"
 libs = ["../contracts/lib"]
 allow_paths = ["../contracts/lib"]
+# S5 writes its state table here for check_weights.py
+fs_permissions = [{ access = "read-write", path = "./s5-weight-math" }]
 remappings = [
     "forge-std/=../contracts/lib/forge-std/src/",
     "base-std/=../contracts/lib/base-std/src/",

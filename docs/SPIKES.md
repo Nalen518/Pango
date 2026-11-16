@@ -6,7 +6,7 @@
 | S2 Vault holds B20 | PASS (local) · Sepolia tx hashes deferred | A contract can pull, hold and send our test stock; allowlists and issuer seizure behave as documented |
 | S3 Fair-value units | PARTIAL · rest deferred (API blocked, public RPC rate-limited) | Feeds read: 8 decimals, ~50 h weekend freeze; units and real-token checks need the Coinbase API |
 | S4 Revert decode | PASS (local) · Sepolia tx hash deferred | web3.py decodes custom errors from eth_call and can broadcast the reverting tx |
-| S5 Weight math | not started | |
+| S5 Weight math | PASS | 55/55 states within 1 bps of exact math; full buy with target check 223k gas; split leaves weights unchanged |
 
 ## S1 — B20 asset token, scheduled split, read from a contract
 
@@ -164,3 +164,38 @@ Feed addresses from https://docs.base.org/build-on-base/integrate-defi/list-toke
 
 - FR-A4: name the mechanism — "preflight with `eth_call`, decode the revert against an error table built from the vault ABI plus OpenZeppelin and B20 errors; in proof mode broadcast with an explicit gas limit (skipping `estimate_gas`) after a chain-id check that allows only 84532."
 - Section 9 S4 fallback ("show preflight result only, labelled simulated") is not needed on testnet; keep it as the NFR-12 budget fallback.
+
+## S5 — Weight math across decimals, and gas of a buy with the target check
+
+**Verdict:** PASS on base-anvil (live Rust precompiles). Run: `cd spikes && bash s5-weight-math/run.sh` (forge tests with `--isolate`, then `python3 s5-weight-math/check_weights.py`).
+
+**What we did**
+
+- `WeightMath` (in `spikes/s5-weight-math/S5Lib.sol`): value18 = `balanceOfUI × price8 × 1e10 / 10^decimals` per stock + `usdc6 × 1e12`; `weightBps = part × 10,000 / total` (0 when total is 0). Feed = USDC per UI share (SRD FR-V12); if S3 settles on "per raw token", only `stockValue18` changes.
+- 50 seeded random states (seed `0x5EED5`, regenerable) + 5 edge cases, each written to `states.csv`. Raw balances are minted on **real B20 tokens** and multipliers set on-chain (1×, 10× split, 1.0123× dividend-style, 0.5× reverse split, random 0.5–20×); `balanceOfUI` is read back from the precompile. Every 5th state uses a **6-decimal** B20 token.
+- `check_weights.py` recomputes each weight from the raw inputs with exact fractions (independent of Solidity's rounding) and checks the B20 UI conversion equals `floor(raw × multiplier / 1e18)`.
+- `MiniVault` (throwaway): the SRD buy path in order — pause, allowlist, per-trade and daily cap, feed answer and staleness, pending split (`effectiveAt() > block.timestamp`), fair-value band, swap through a fixed-price pool, share cap, then the target check (targets set, `researchHash ≠ 0`, so the check really runs). Gas measured with `--isolate` (each call costed as its own transaction, cold storage).
+
+**Measured**
+
+| Check | Result |
+| --- | --- |
+| Weights, 55 states | all within 1 bps of exact; worst **0.9937 bps** over the 50 random states, **0.99999998 bps** on the dust row (Solidity floors, so the error is always < 1 bps) |
+| B20 UI conversion | `balanceOfUI = floor(raw × multiplier / 1e18)` in all 110 reads, for 18- and 6-decimal tokens |
+| Edge cases | all-USDC → 10,000 bps USDC; empty portfolio → 0/0/0, no revert; single stock → 10,000; 1e30-unit balances at 20× and $100,000 → no overflow |
+| Split invariance | 10× split with feed ÷10 → weights 3857 / 3285 bps before and after, exactly equal |
+| Gas: buy 20 USDC, every check incl. target (2 stocks, 2 feeds) | **223,013** execution gas (+21k base + calldata ≈ 245k per tx) — under the 300k target |
+| Gas: buy reverting `AboveFairValue` after the swap | **169,632** execution gas |
+
+**Surprises / notes**
+
+1. `balanceOfUI` returns amounts in the token's own `decimals()`, not 18. The math must divide by `10^decimals` (done here); NFR-5's "B20 per its `decimals()`" is right and must not be simplified to 18.
+2. The target check reads every stock's feed and balance (portfolio value), so buy gas grows with the number of stocks (~25k per extra stock, estimated). Two stocks fit easily.
+3. A post-swap revert costs ~76% of a full buy, so NFR-12's 400k proof-mode gas limit and "budget sized from a full buy" hold.
+
+**Recommended SRD changes**
+
+- Section 9 S5: mark passed; fallback (move the overshoot check to a view) not needed.
+- NFR-12: size the budget with the measured numbers — about 245k gas per proof-mode revert transaction (≈ 50 reverts/day ≈ 12M gas).
+- FR-V12: state the formula with decimals: value18 = USDC × 1e12 + Σ `balanceOfUI × price8 × 1e10 / 10^decimals`; keep "feed per UI share" pending S3.
+- AT-05 / AT-17: the split-invariance property is proven for the math; the `ScheduleSplit` script must move the feed ÷10 at the effective time for it to hold on-chain.
