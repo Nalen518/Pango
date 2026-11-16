@@ -4,7 +4,7 @@
 | --- | --- | --- |
 | S1 B20 multiplier | PASS (local) · Sepolia tx hashes pending | Pending split is readable from a contract; Sepolia supports it |
 | S2 Vault holds B20 | PASS (local) · Sepolia tx hashes deferred | A contract can pull, hold and send our test stock; allowlists and issuer seizure behave as documented |
-| S3 Fair-value units | not started | |
+| S3 Fair-value units | PARTIAL · rest deferred (API blocked, public RPC rate-limited) | Feeds read: 8 decimals, ~50 h weekend freeze; units and real-token checks need the Coinbase API |
 | S4 Revert decode | not started | |
 | S5 Weight math | not started | |
 
@@ -90,3 +90,48 @@
 - NFR-8 "what is not real yet" panel — add: "Real tokenized stocks are subject to the issuer's transfer policies and clawback; the vault works only if Coinbase's policy authorizes its address (spike S3 checks this on mainnet)."
 - FR-V6 / sell path — map `PolicyForbids(scope, id)` to a plain-English receipt line: "The stock's issuer does not allow this transfer right now."
 - Runbook (section 7): no allowlist setup is needed for tNVDA/tAAPL; default policies let the vault and StockSwap hold them.
+
+## S3 — Fair-value units, weekend staleness, real-stock policy, corporate actions (mainnet, read-only)
+
+**Verdict:** PARTIAL. Feed half done; the half that needs `api.coinbase.com` is blocked on this network.
+
+**Blocker:** the ISP (Telkomsel "Internet Baik" filter) resolves `api.coinbase.com` to `202.3.218.139` and serves a certificate for `internetbaik.telkomsel.com`. Every request to the Tokenized Stocks API fails TLS (PowerShell, WSL curl and the web-fetch agent alike). Base mainnet RPC (`mainnet.base.org`) and docs.base.org are reachable. Base's docs do not list the token addresses; only the API does.
+
+**What we did** — `spikes/s3-fair-value-units/feeds.sh` (read-only `base-cast call`, no wallet) on Base mainnet, Mon Nov 16 2026 02:46 UTC.
+
+| Feed (Base mainnet) | Address | Decimals | Latest answer | updatedAt (UTC) |
+| --- | --- | --- | --- | --- |
+| Coinbase NVDA | `0x04689a41629776563E6822F76f2e57D148d28513` | 8 | 163.79831928 | Mon Nov 16 02:40 |
+| Coinbase AAPL | `0x787f13dEa48Db0897CbCDD985de77809D837F988` | 8 | 357.72827323 | Mon Nov 16 01:00 |
+
+Feed addresses from https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks. Interface: Chainlink `AggregatorV3Interface` (`description`, `decimals`, `latestRoundData`, `getRoundData`).
+
+**Measured (last 40 rounds each)**
+
+- **Weekend gap:** NVDA 49 h (Fri Nov 13 23:36 → Mon Nov 16 01:00 UTC); AAPL 51 h (Nov 13–16) and 53 h (Nov 6–9). Updates resume Monday ~01:00 UTC (Sunday 8 pm ET), so the feed follows 24/5 trading, not just regular hours.
+- **Longest weekday gap:** AAPL ~20 h (Mon Nov 9 15:27 → Tue Nov 10 12:26 UTC). NVDA updates every few minutes in session.
+- **Weekend reopen jump:** NVDA 160.77 → 164.86 (+2.5%) across the weekend — a real example of the gap the fair-value band guards.
+- **Thresholds check:** `maxStaleness = 26 h` puts every weekend in stale mode and no normal weekday in it; `hardStaleLimit = 72 h` stays clear of a 53 h weekend but a US holiday weekend (e.g. Thanksgiving Thu Nov 26) could approach it — not measured.
+
+**Units (open):** Base's docs say Coinbase feeds report "Total Return Values" and "Token Price = Underlying Equity Market Price × Multiplier". That implies the feed is the price **per raw token**, so value = `balanceOf` × feed, not `balanceOfUI` × feed (what the SRD says now). Confirming needs one real token's `uiMultiplier()` (≠ 1 after any dividend) — needs its address from the API.
+
+**Onchain route (tried Nov 16, no API):**
+
+- Feed aggregators are standard Chainlink OCR2 contracts: NVDA `0xF72B1eB5932800F3d2a5EeC5f99e6cD586479675`, AAPL `0xc37B6F754e90D4Cca1f533F5a08f7d532b3d0d9D`.
+- Coinbase oracle registry `0x3f3E…5CaD` (1.5 kB, not a proxy) exposes `getOracleParams(address)`, `setOraclePaused(address,bool)`, `multiplier()`, `PAUSER_ROLE()` and AccessControl (names from the public 4byte database). `getOracleParams` reverts for both feed and aggregator addresses, so it is most likely keyed by the token address.
+- Finding the token addresses from the factory's `B20Created` events (`topic0 0xfd9bf273…ba0d`) is possible, but the public `mainnet.base.org` RPC rate-limits `eth_getLogs` (`-32011 request limit reached`). Needs a provider RPC URL (Alchemy, CDP or similar) in `.env` as `BASE_MAINNET_RPC_URL`.
+
+**Not done (needs the API, or a provider RPC for the onchain route):**
+
+1. Real NVDA/AAPL token addresses on Base (`contract_address` in `GET /`), `multiplier`, `nav_price`, `nav_price_updated_at` → compare feed vs NAV vs a DEX quote within ~1%.
+2. Policy check: `policyId(TRANSFER_RECEIVER_POLICY)` etc. on the real token, then `isAuthorized(id, <a plain contract address>)` on the policy registry.
+3. Corporate-action lead times: `GET /corporate-actions/{id}`, and the token's `effectiveAt()` history.
+4. Aerodrome pool address and quote (not in Base docs).
+
+**Recommended SRD changes so far**
+
+- Keep `maxStaleness = 26 h`; note the measured 49–53 h weekend gap next to `hardStaleLimit = 72 h` and add a holiday check to the runbook.
+- Our `MockAggregatorV3` should copy real behaviour: 8 decimals, frequent updates in session, ~50 h weekend freeze, updates resuming Sunday 8 pm ET.
+- Hold the units change (FR-V5, FR-V12: feed per UI share vs per raw token) until item 1 is answered. For the testnet demo this is our choice: our `MockAggregatorV3` reports USDC per UI share, as the SRD says, labelled in the UI.
+
+**Deferred (Nov 16):** items 1–4 wait for a provider RPC URL in `.env` (`BASE_MAINNET_RPC_URL`) or a network where `api.coinbase.com` loads. Nothing in the testnet demo depends on them.
