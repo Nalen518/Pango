@@ -1,6 +1,6 @@
 # Pango — API contract
 
-Nov 16, 2026 · Phase 0 output · source of truth for every interface between the vault, the agent service, the web app and the outside world.
+Nov 16, 2026 · Phase 0 output · source of truth for every interface between PangoGuard, the agent service, the web app and the outside world.
 
 Built from `docs/Pango-SRD.md`, the pinned libraries in `contracts/lib` (base-std v1.1.0, OpenZeppelin v5.7.0), the spike results in `docs/SPIKES.md`, and the Base docs pages the SRD links (read Nov 16, 2026).
 
@@ -25,7 +25,7 @@ Open contradictions and undecided items are collected in [section 9](#9-gaps-and
 | USDC amounts | 6 decimals (`tUSDC`) | SRD |
 | Feed prices | 8 decimals, **USDC per UI share** (Chainlink `AggregatorV3Interface`) | SRD, Spike S3 (real feeds are 8 decimals) |
 | Stock amounts | `raw` = B20 `balanceOf` units; `shares` = `balanceOfUI` units, both in the token's own `decimals()` (6–18) | Base, Spike S5 |
-| Prices inside the vault and in error arguments | 18 decimals, USDC per UI share (NFR-5) | SRD, Proposed (error args) |
+| Prices inside the guard and in error arguments | 18 decimals, USDC per UI share (NFR-5) | SRD, Proposed (error args) |
 | Portfolio value | 18-decimal USD: `USDC × 1e12 + Σ balanceOfUI × price8 × 1e10 / 10^decimals` | SRD FR-V12, Spike S5 |
 | Weights | basis points, `value × 10,000 / total` rounded down, 0 when total is 0; drift = absolute percentage points | SRD, Spike S5 |
 | Time | Unix seconds (`block.timestamp`); "day" = UTC day `timestamp / 86400` | SRD |
@@ -33,9 +33,9 @@ Open contradictions and undecided items are collected in [section 9](#9-gaps-and
 
 ---
 
-## 2. PangoVault (Solidity)
+## 2. PangoGuard (Solidity)
 
-Non-upgradeable, OpenZeppelin `Ownable2Step` + `Pausable` + `ReentrancyGuard` + `SafeERC20`; no `delegatecall`, no arbitrary call; only the configured router and tokens are called (SRD NFR-1).
+*Redesigned Nov 19 from PangoVault (spike S6, SRD changelog).* One non-upgradeable contract for **every** account; it holds **no user funds between transactions**. Funds stay in the owner's Base Account and are pulled per trade through Coinbase's `SpendPermissionManager` (§6.5); the output goes back to the owner in the same transaction. OpenZeppelin `Ownable2Step` (admin: router only) + `ReentrancyGuard` + `SafeERC20`; no `delegatecall`, no arbitrary call; only the router, the tokens and `SpendPermissionManager.spend` are called (SRD NFR-1). Base Account / Coinbase Smart Wallet owners only.
 
 ### 2.1 Types
 
@@ -50,79 +50,80 @@ struct StockConfig {                         // Proposed field set; values from 
     uint32  maxStaleness;     // seconds, e.g. 26 h
     uint32  hardStaleLimit;   // seconds, e.g. 72 h
     uint256 maxShares;        // share cap in UI units, in the token's own decimals (D1)
+    uint32  corporateActionWindow; // seconds, e.g. 1 h: block only |now − effectiveAt| < window (Nov 19)
 }
+
+// SpendPermission: Coinbase's struct, unchanged (§6.5)
 ```
 
-Per-stock weight bounds and targets live outside `StockConfig` because they have their own setters (SRD).
+All user state is keyed by **account** = the owner's Base Account (`msg.sender` for account functions, `permission.account` for agent trades). Per-stock weight bounds and targets live outside `StockConfig` because they have their own setters (SRD).
 
 ### 2.2 Functions
 
 ```solidity
-constructor(address owner, address agent, address usdc, address router);   // SRD FR-V1; usdc immutable
+constructor(address admin, address usdc, address router, address spendPermissionManager);  // usdc, SPM immutable
 
-// ---- owner (onlyOwner; all work while paused) ----                          SRD
+// ---- account (msg.sender = the owner's Base Account) ----                    SRD FR-V2
+function setAgent(address agent) external;
 function setMandate(uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd) external;
 function configureStock(address token, StockConfig calldata cfg) external;
 function setWeightBounds(address token, uint16 minBps, uint16 maxBps) external;
 function setTolerance(uint16 toleranceBps, uint16 driftTriggerBps) external;
 function setTargetsCooldown(uint32 cooldownSeconds) external;
-function setAgent(address agent) external;
+function setPaused(bool paused) external;
+// Funding = grant a spend permission in the wallet; cut-off = revoke it (§5). No deposit / withdraw.
+
+// ---- agent of that account (nonReentrant) ----                              SRD FR-V3
+function buy(SpendPermission calldata usdcPermission, address token, uint256 usdcIn) external returns (uint256 rawOut);
+function sell(SpendPermission calldata stockPermission, address token, uint256 rawIn) external returns (uint256 usdcOut);
+function setTargets(address account, address[] calldata tokens, uint16[] calldata weightsBps, bytes32 researchHash) external;
+
+// ---- admin (Ownable2Step) — cannot move user funds ----
 function setRouter(address router) external;
-function deposit(uint256 usdcAmount) external;                 // pulls tUSDC from owner (transferFrom)
-function withdraw(address token, uint256 amount) external;     // nonReentrant; always to owner()
-function pause() external;
-function unpause() external;
-// ownership: transferOwnership / acceptOwnership from Ownable2Step          Base (OZ v5)
 
-// ---- agent (onlyAgent) ----                                                  SRD
-function buy(address token, uint256 usdcIn) external returns (uint256 rawOut);    // whenNotPaused, nonReentrant
-function sell(address token, uint256 rawIn) external returns (uint256 usdcOut);   // whenNotPaused, nonReentrant
-function setTargets(address[] calldata tokens, uint16[] calldata weightsBps, bytes32 researchHash) external; // whenNotPaused
-
-// ---- views ----                                                              SRD
-function previewBuy(address token, uint256 usdcIn) external view
-    returns (bytes4 errorSelector, uint256 maxPrice, uint256 feedAge);  // errorSelector == 0x00000000 → would pass (Proposed)
-function previewSell(address token, uint256 rawIn) external view
+// ---- views (per account) ----
+function previewBuy(address account, address token, uint256 usdcIn) external view
+    returns (bytes4 errorSelector, uint256 maxPrice, uint256 feedAge);  // 0x00000000 → would pass (D8)
+function previewSell(address account, address token, uint256 rawIn) external view
     returns (bytes4 errorSelector, uint256 minPrice, uint256 feedAge);
-function spentToday() external view returns (uint256);
-function soldToday() external view returns (uint256);
-function portfolioValue() external view returns (uint256 usdValue18);
-function weightOf(address token) external view returns (uint16 weightBps);
-
-// ---- public getters (Proposed, needed by web + agent) ----
-function agent() external view returns (address);
+function spentToday(address account) external view returns (uint256);
+function soldToday(address account) external view returns (uint256);
+function portfolioValue(address account) external view returns (uint256 usdValue18);   // reads the account's wallet balances
+function weightOf(address account, address token) external view returns (uint16 weightBps);
+function agentOf(address account) external view returns (address);
+function paused(address account) external view returns (bool);
+function stockConfig(address account, address token) external view returns (StockConfig memory);
+function stocks(address account) external view returns (address[] memory);
+function weightBounds(address account, address token) external view returns (uint16 minBps, uint16 maxBps);
+function targetBps(address account, address token) external view returns (uint16);
+function researchHash(address account) external view returns (bytes32);
+function lastTargetsAt(address account) external view returns (uint256);
+function mandate(address account) external view returns (uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd);
+function tolerance(address account) external view returns (uint16 toleranceBps, uint16 driftTriggerBps);
+function targetsCooldown(address account) external view returns (uint32);
 function router() external view returns (address);
 function usdc() external view returns (address);
-function stockConfig(address token) external view returns (StockConfig memory);
-function stocks() external view returns (address[] memory);              // configured tokens, in order
-function weightBounds(address token) external view returns (uint16 minBps, uint16 maxBps);
-function targetBps(address token) external view returns (uint16);
-function researchHash() external view returns (bytes32);
-function lastTargetsAt() external view returns (uint256);
-function mandate() external view returns (uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd);
-function tolerance() external view returns (uint16 toleranceBps, uint16 driftTriggerBps);
-function targetsCooldown() external view returns (uint32);
-// paused() and owner() from OZ
+function spendPermissionManager() external view returns (address);
 ```
 
 ### 2.3 Check order
 
-**Buy** (SRD section 5; proven in Spike S5's MiniVault):
+**Buy** (SRD section 5; math proven in Spike S5, permission flow in Spike S6). `account = usdcPermission.account`:
 
-1. Paused → `EnforcedPause`; caller ≠ agent → `NotAgent`
+1. `msg.sender != agentOf[account]` → `NotAgentOf`; `usdcPermission.spender != address(this)` or `usdcPermission.token != usdc` → `WrongPermission`; `paused[account]` → `AccountPaused`
 2. `!allowed` → `TokenNotAllowed`
-3. `usdcIn > perTradeCapUsd` → `ExceedsPerTradeCap`; `spentToday + usdcIn > dailyCapUsd` → `ExceedsDailyCap` (day rolls at 00:00 UTC)
+3. `usdcIn > perTradeCapUsd` → `ExceedsPerTradeCap`; `spentToday + usdcIn > dailyCapUsd` → `ExceedsDailyCap` (UTC day; the permission's allowance is an outer ceiling)
 4. Feed `answer ≤ 0` → `InvalidFeedAnswer`; `age > hardStaleLimit` → `StaleOracle`; band = `staleBandBps` if `age > maxStaleness`, else `bandBps`
-5. `IB20Asset(token).effectiveAt() > block.timestamp` → `CorporateActionPending(effectiveAt)` — never test `!= 0` (Spike S1)
-6. `maxPrice = oracle × (10,000 + band) / 10,000`; `forceApprove(router, usdcIn)` exactly; swap; measure `balanceOfUI` received
+5. `|block.timestamp − IB20Asset(token).effectiveAt()| < corporateActionWindow` → `CorporateActionPending(effectiveAt)` (Spike S1: compare with `block.timestamp`, never `!= 0`)
+6. `SpendPermissionManager.spend(usdcPermission, usdcIn)` → USDC arrives in the guard (bubbles `ExceededSpendPermission` / `UnauthorizedSpendPermission`); `maxPrice = oracle × (10,000 + band) / 10,000`; `forceApprove(router, usdcIn)` exactly; swap; measure stock received
 7. paid > max → `AboveFairValue(paidPrice, maxPrice)`
-8. `balanceOfUI(vault) > maxShares` → `ExceedsShareCap(sharesAfter, maxShares)`
-9. If `researchHash != 0`: `weightOf(token) > target + tolerance` → `OvershootsTarget`
-10. Update `spentToday`, emit `TradeExecuted`
+8. Transfer the stock to `account`; `balanceOfUI(account) > maxShares` → `ExceedsShareCap(sharesAfter, maxShares)`
+9. If `researchHash[account] != 0`: `weightOf(account, token) > target + tolerance` → `OvershootsTarget`
+10. Update `spentToday[account]`, emit `TradeExecuted`; the guard's balances equal their pre-call values
 
-**Sell** mirrors 1, 2, 4, 5, then `soldToday + value(rawIn at oracle) > dailySellCapUsd` → `ExceedsDailySellCap`, then `BelowFairValue(receivedPrice, minPrice)`, then target check (`weight < target − tolerance` → `OvershootsTarget`) (SRD).
+**Sell** (`account = stockPermission.account`, `stockPermission.token == token`): steps 1, 2, 4, 5, then `soldToday + value(rawIn at oracle) > dailySellCapUsd` → `ExceedsDailySellCap`, `spend(stockPermission, rawIn)`, swap, `BelowFairValue(receivedPrice, minPrice)`, USDC to `account`, then target check (`weight < target − tolerance` → `OvershootsTarget`).
 
-**setTargets**: paused → `EnforcedPause`; not agent → `NotAgent`; `block.timestamp < lastTargetsAt + cooldown` → `TargetsCooldown(readyAt)`; length mismatch → `LengthMismatch`; `researchHash == 0` → `ZeroResearchHash`; each weight outside `[min, max]` or Σ > 10,000 → `TargetOutOfBounds`; configured stocks not listed get target 0 (revert `TargetOutOfBounds` if their `min > 0`) (SRD FR-V11; error names for the two new cases Proposed).
+**setTargets(account, …)**: `msg.sender != agentOf[account]` → `NotAgentOf`; `paused[account]` → `AccountPaused`; `block.timestamp < lastTargetsAt + cooldown` → `TargetsCooldown(readyAt)`; length mismatch → `LengthMismatch`; `researchHash == 0` → `ZeroResearchHash`; each weight outside `[min, max]` or Σ > 10,000 → `TargetOutOfBounds`; configured stocks not listed get target 0 (revert `TargetOutOfBounds` if their `min > 0`) (SRD FR-V11; error names for the two new cases Proposed).
 
 ### 2.4 Errors
 
@@ -130,22 +131,23 @@ Plain-English text is what the receipt line shows (SRD section 5). Parameters ma
 
 | Error | Thrown by | Receipt text | Tag |
 | --- | --- | --- | --- |
-| `OwnableUnauthorizedAccount(address account)` | owner functions | Only the owner can do this | Base (OZ v5) |
-| `NotAgent(address caller)` | agent functions | Only the agent can do this | SRD name, Proposed args |
-| `EnforcedPause()` | buy, sell, setTargets | The owner paused the agent | Base (OZ v5) |
+| `NotAgentOf(address caller, address account)` | buy, sell, setTargets | This agent is not allowed to trade for this account | Proposed (Nov 19, Spike S6) |
+| `WrongPermission()` | buy, sell | That permission doesn't belong to this trade | Proposed (Nov 19) |
+| `AccountPaused(address account)` | buy, sell, setTargets | The owner paused the agent | Proposed (Nov 19) |
+| `OwnableUnauthorizedAccount(address account)` | setRouter | Only the guard admin can change the router | Base (OZ v5) |
 | `TokenNotAllowed(address token)` | buy, sell | This stock is not on your list | SRD, Proposed args |
-| `ExceedsPerTradeCap(uint256 usdcIn, uint256 cap)` | buy | Over your per-trade limit | SRD, Proposed args |
+| `ExceedsPerTradeCap(uint256 usdcIn, uint256 cap)` | buy | Over your limit for one trade | SRD, Proposed args |
 | `ExceedsDailyCap(uint256 spentAfter, uint256 cap)` | buy | Over your daily limit | SRD, Proposed args |
 | `ExceedsDailySellCap(uint256 soldAfter, uint256 cap)` | sell | Over your daily selling limit | SRD, Proposed args |
 | `InvalidFeedAnswer(int256 answer)` | buy, sell | No trustworthy price right now | SRD, Proposed args |
 | `StaleOracle(uint256 feedAge, uint256 limit)` | buy, sell | No trustworthy price right now | SRD, Proposed args |
-| `CorporateActionPending(uint256 effectiveAt)` | buy, sell | A split or dividend adjustment is scheduled; trading waits until it takes effect | SRD |
+| `CorporateActionPending(uint256 effectiveAt)` | buy, sell | A split or dividend change is scheduled. Trading waits until it takes effect. | SRD |
 | `AboveFairValue(uint256 paidPrice, uint256 maxPrice)` | buy | The price is too far from the reference price | SRD (prices 18 dec, Proposed) |
 | `BelowFairValue(uint256 receivedPrice, uint256 minPrice)` | sell | The price is too far from the reference price | SRD |
 | `ExceedsShareCap(uint256 sharesAfter, uint256 maxShares)` | buy | This would put you over your share limit | SRD |
 | `TargetOutOfBounds(address token, uint16 weightBps)` | setTargets | That target is outside the range you allowed | SRD |
 | `OvershootsTarget(address token, uint256 weightAfterBps, uint256 targetBps)` | buy, sell | This trade would push the stock past its target | SRD |
-| `TargetsCooldown(uint256 readyAt)` | setTargets | Targets were changed moments ago; wait before changing them again | SRD |
+| `TargetsCooldown(uint256 readyAt)` | setTargets | Targets changed moments ago. Wait before changing them again. | SRD |
 | `LengthMismatch(uint256 tokens, uint256 weights)` | setTargets | — (agent bug) | Proposed |
 | `ZeroResearchHash()` | setTargets | — (agent bug) | Proposed |
 | `ZeroAddress()` | constructor, setAgent, setRouter, configureStock | — (setup bug) | Proposed |
@@ -171,25 +173,27 @@ Anything else → "unknown error 0x…" with the raw selector (SRD FR-A4).
 
 | Event | Emitted by | Tag |
 | --- | --- | --- |
-| `MandateUpdated(uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd)` | setMandate | SRD name, Proposed args |
-| `StockConfigured(address indexed token, StockConfig cfg)` | configureStock | SRD name, Proposed args |
-| `WeightBoundsUpdated(address indexed token, uint16 minBps, uint16 maxBps)` | setWeightBounds | Proposed (see D3) |
-| `ToleranceUpdated(uint16 toleranceBps, uint16 driftTriggerBps)` | setTolerance | Proposed (see D3) |
-| `TargetsCooldownUpdated(uint32 cooldownSeconds)` | setTargetsCooldown | Proposed |
-| `AgentChanged(address indexed oldAgent, address indexed newAgent)` | setAgent | SRD name, Proposed args |
-| `RouterChanged(address indexed oldRouter, address indexed newRouter)` | setRouter | SRD name, Proposed args |
-| `Deposited(address indexed token, uint256 amount)` | deposit | SRD name, Proposed args |
-| `Withdrawn(address indexed token, uint256 amount, address indexed to)` | withdraw | SRD name, Proposed args |
-| `TradeExecuted(address indexed token, Side side, uint256 usdcAmount, uint256 rawAmount, uint256 sharesAfter, uint256 oraclePrice, uint256 feedAge)` | buy, sell | SRD |
-| `TargetsSet(bytes32 indexed researchHash, address[] tokens, uint16[] weightsBps)` | setTargets | SRD (indexed Proposed) |
-| `Paused(address account)` `0x62e78cea…a258` / `Unpaused(address account)` `0x5db9ee0a…73aa` | pause / unpause | Base (OZ v5) |
-| `OwnershipTransferStarted`, `OwnershipTransferred` | Ownable2Step | Base (OZ v5) |
+Every account-scoped event has `address indexed account` first.
 
-B20 tokens emit their own `Paused(address,uint8[])` with a different topic; index vault events by vault address only.
+| Event | Emitted by | Tag |
+| --- | --- | --- |
+| `AgentSet(address indexed account, address indexed agent)` | setAgent | Proposed (Nov 19) |
+| `MandateUpdated(address indexed account, uint256 perTradeCapUsd, uint256 dailyCapUsd, uint256 dailySellCapUsd)` | setMandate | SRD name, Proposed args |
+| `StockConfigured(address indexed account, address indexed token, StockConfig cfg)` | configureStock | SRD name, Proposed args |
+| `WeightBoundsUpdated(address indexed account, address indexed token, uint16 minBps, uint16 maxBps)` | setWeightBounds | Proposed (D3) |
+| `ToleranceUpdated(address indexed account, uint16 toleranceBps, uint16 driftTriggerBps)` | setTolerance | Proposed (D3) |
+| `TargetsCooldownUpdated(address indexed account, uint32 cooldownSeconds)` | setTargetsCooldown | Proposed |
+| `AccountPausedSet(address indexed account, bool paused)` | setPaused | Proposed (Nov 19) |
+| `TradeExecuted(address indexed account, address indexed token, Side side, uint256 usdcAmount, uint256 rawAmount, uint256 sharesAfter, uint256 oraclePrice, uint256 feedAge)` | buy, sell | SRD |
+| `TargetsSet(address indexed account, bytes32 indexed researchHash, address[] tokens, uint16[] weightsBps)` | setTargets | SRD (indexed Proposed) |
+| `RouterChanged(address indexed oldRouter, address indexed newRouter)` | setRouter (admin) | SRD name, Proposed args |
+| `OwnershipTransferStarted`, `OwnershipTransferred` | Ownable2Step (admin) | Base (OZ v5) |
 
-### 2.6 Gas (Spike S5, base-anvil, 2 stocks)
+`SpendPermissionManager` also emits `SpendPermissionUsed(hash, account, spender, token, periodSpend)` on every pull (Coinbase source). B20 tokens emit `Paused(address,uint8[])`; index guard events by guard address.
 
-Full buy with every check incl. target ≈ 223k execution gas (~245k per transaction); `AboveFairValue` revert after the swap ≈ 170k; revert at the top of `buy` ≈ 22k (Spike S4). Proof-mode sends use a 400k gas limit (SRD NFR-12).
+### 2.6 Gas
+
+Checks with 2 stocks ≈ 223k execution gas (Spike S5); permission pull + delivery ≈ 123k (Spike S6) → guarded buy estimated **~350k** (not yet measured as one transaction); `AboveFairValue` revert after the swap ≈ 170k + the pull; revert at the top of `buy` ≈ 22k (Spike S4). Proof-mode sends use a 450k gas limit (SRD NFR-12).
 
 ---
 
@@ -212,7 +216,7 @@ symbol = "tNVDA" / "tAAPL"
 initCalls = grantRole(MINT_ROLE, deployer), grantRole(OPERATOR_ROLE, deployer)
 ```
 
-18 decimals; every policy slot left at `0` (always allow), so the vault and StockSwap hold them with no setup (Spike S2). Splits: `updateUIMultiplier(newMultiplier, effectiveAt)` by the operator (Spike S1).
+18 decimals; every policy slot left at `0` (always allow), so owners' wallets, PangoGuard (in transit) and StockSwap hold them with no setup (Spikes S2, S6). Splits: `updateUIMultiplier(newMultiplier, effectiveAt)` by the operator (Spike S1).
 
 ### 3.3 MockAggregatorV3 (one per stock)
 
@@ -238,7 +242,7 @@ function setPrice(address stock, uint256 price8) external;     // USDC per UI sh
 function setPremiumBps(int256 premiumBps) external;            // +400 = SetPremium(4%), negative = discount
 ```
 
-The vault passes its own `minAmountOut` and **also** measures the balance change (SRD FR-V6), so a dishonest router still cannot overcharge.
+The guard passes its own `minAmountOut` and **also** measures the balance change (SRD FR-V6), so a dishonest router still cannot overcharge.
 
 ### 3.5 Scenario scripts (SRD section 7)
 
@@ -253,7 +257,7 @@ The SRD names the agent's jobs (FR-A1…A10) but not its HTTP surface; this sect
 ### 4.1 Rules
 
 - Base URL: `NEXT_PUBLIC_AGENT_API_URL` (local `http://127.0.0.1:8000`, hosted on Railway). JSON in and out, UTF-8.
-- **No owner actions, ever.** The owner key never reaches the server (SRD NFR-3); mandate, deposit, withdraw and pause are signed in the browser.
+- **No owner actions, ever.** The owner key never reaches the server (SRD NFR-3); mandate, pause and the spend-permission grant / revoke are signed in the browser.
 - **Public endpoints** are rate-limited per IP (SRD NFR-12, e.g. 1 attack per 30 s) and answer `429` with `Retry-After` when exceeded. When the daily gas budget is spent, attempts still run but are recorded with `mode: "simulated"` (preflight only).
 - **Admin endpoints** need header `X-Admin-Token: <ADMIN_TOKEN env>`; they start research, a rebalance, or toggle proof mode. Never exposed in the web bundle.
 - Every write takes an `idempotencyKey` (client-generated UUID); repeating it returns the same attempt and never sends twice (SRD NFR-7).
@@ -308,7 +312,7 @@ The SRD names the agent's jobs (FR-A1…A10) but not its HTTP surface; this sect
   "chainId": 84532,
   "explorer": "https://sepolia.basescan.org",
   "contracts": {
-    "vault": "0x…", "usdc": "0x…", "router": "0x…",
+    "guard": "0x…", "spendPermissionManager": "0xf85210B21cC50302F477BA56686d2019dC9b67Ad", "usdc": "0x…", "router": "0x…",
     "stocks": [ { "ticker": "NVDA", "symbol": "tNVDA", "token": "0x…", "feed": "0x…", "decimals": 18 } ]
   },
   "builderCode": "bc_…",
@@ -326,7 +330,7 @@ The hash check only works if both sides hash **the same bytes**:
 
 1. The agent serialises the report once (canonical JSON: UTF-8, keys sorted, no insignificant whitespace), stores those bytes, and sends `keccak256(bytes)` as `researchHash` to `setTargets`.
 2. `GET /research/{hash}/report.json` returns the stored bytes verbatim.
-3. The browser hashes the response body as received (`keccak256(new Uint8Array(await res.arrayBuffer()))`) and compares with `vault.researchHash()`. It never re-serialises the JSON.
+3. The browser hashes the response body as received (`keccak256(new Uint8Array(await res.arrayBuffer()))`) and compares with `guard.researchHash(account)`. It never re-serialises the JSON.
 
 ```json
 {
@@ -334,7 +338,7 @@ The hash check only works if both sides hash **the same bytes**:
   "scoringVersion": "score-v1",
   "createdAt": "2026-11-20T03:00:00Z",
   "chainId": 84532,
-  "vault": "0x…",
+  "guard": "0x…",
   "bounds": { "NVDA": { "minBps": 1000, "maxBps": 4000 } },
   "signals": [
     {
@@ -366,12 +370,14 @@ Hybrid weights (SRD FR-A7): `baselineBps = score(signals, bounds)` must be repro
 
 | Item | Value | Tag |
 | --- | --- | --- |
-| Connectors | `baseAccount({ appName, appLogoUrl })` from `wagmi/connectors` (needs `@base-org/account ^2.5.1`; we have 2.6.0) and `injected()` | Base (wagmi docs), SRD |
+| Connectors | `baseAccount({ appName, appLogoUrl })` from `wagmi/connectors` (needs `@base-org/account ^2.5.1`; we have 2.6.0). **Base Account only** — injected wallets can't grant spend permissions (Spike S6) | Base (wagmi docs), SRD |
 | Chain | `baseSepolia` from `viem/chains` | Base |
-| Reads (every block or 4 s, NFR-6) | `paused`, `mandate`, `stocks`, `stockConfig`, `spentToday`, `soldToday`, `portfolioValue`, `weightOf`, `targetBps`, `weightBounds`, `tolerance`, `researchHash`; per stock `balanceOfUI(vault)`, `balanceOf(vault)`, `effectiveAt`, `newUIMultiplier`, `uiMultiplier`; feed `latestRoundData`; router `quote` | SRD FR-W3, W8 |
-| Owner writes | `setMandate`, `configureStock`, `setWeightBounds`, `setTolerance`, `setTargetsCooldown`, `deposit` (after `tUSDC.approve`), `withdraw`, `pause`, `unpause` | SRD FR-W2, W6 |
-| Errors on owner writes | decoded with viem `decodeErrorResult` against the vault ABI + the bubbled errors (2.4), shown with the receipt text | Proposed |
-| Mascot pose (FR 4.4) | Sleeping if `paused`; else Curled if the latest attempt `status = reverted / preflight_failed`; else Half-curled if any stock `effectiveAt > now`; else Peeking if any feed age > `maxStaleness`; else Walking | SRD, priority order Proposed |
+| Reads (every block or 4 s, NFR-6), all for the connected `account` | guard: `paused`, `agentOf`, `mandate`, `stocks`, `stockConfig`, `spentToday`, `soldToday`, `portfolioValue`, `weightOf`, `targetBps`, `weightBounds`, `tolerance`, `researchHash`; per stock `balanceOfUI(account)`, `balanceOf(account)`, `effectiveAt`, `newUIMultiplier`, `uiMultiplier`; tUSDC `balanceOf(account)`; feed `latestRoundData`; router `quote`; permission status via `fetchPermissions` / `getPermissionStatus` | SRD FR-W3, W8 |
+| Owner writes (guard) | `setAgent`, `setMandate`, `configureStock`, `setWeightBounds`, `setTolerance`, `setTargetsCooldown`, `setPaused` | SRD FR-W2, W6 |
+| Owner writes (wallet) | `requestSpendPermission({ account, spender: guard, token: tUSDC, chainId: 84532, allowance, periodInDays: 1, provider })` — and one per stock (`token: tNVDA`, allowance in raw units) for sells; `requestRevoke(permission)` for the Revoke button. Import from `@base-org/account/spend-permission`. Show token, allowance and period in plain words **before** the wallet prompt | Base (`@base-org/account` 2.6.0 types), Spike S6 |
+| Agent side | the agent stores each account's granted `SpendPermission` struct (from `fetchPermissions`) and passes it to `buy` / `sell` | Proposed |
+| Errors on owner writes | decoded with viem `decodeErrorResult` against the guard ABI + the bubbled errors (2.4), shown with the receipt text | Proposed |
+| Mascot pose (FR 4.4) | Sleeping if `paused(account)` or the USDC permission is revoked; else Curled if the latest attempt `status = reverted / preflight_failed`; else Half-curled if any stock is inside its corporate-action window; else Peeking if any feed age > `maxStaleness`; else Walking | SRD, priority order Proposed |
 
 ---
 
@@ -387,12 +393,12 @@ Hybrid weights (SRD FR-A7): `baselineBps = score(signals, bounds)` must be repro
 
 | Call | Selector | Used by |
 | --- | --- | --- |
-| `balanceOf(address)` | `0x70a08231` | vault, web |
-| `balanceOfUI(address)` | `0x437a9958` | vault (share cap, valuation), web |
-| `decimals()` | `0x313ce567` | vault valuation |
-| `transfer(address,uint256)` / `transferFrom(address,address,uint256)` / `approve(address,uint256)` | `0xa9059cbb` / `0x23b872dd` / `0x095ea7b3` | vault, StockSwap |
-| `uiMultiplier()` / `newUIMultiplier()` / `effectiveAt()` | `0xa60bf13d` / `0xdc767007` / `0x97a4064f` | vault check 5, agent fact-check, web |
-| `toUIAmount(uint256)` / `fromUIAmount(uint256)` | `0x3248d4ff` / `0x65cd9b3c` | vault, StockSwap |
+| `balanceOf(address)` | `0x70a08231` | guard, web |
+| `balanceOfUI(address)` | `0x437a9958` | guard (share cap and valuation on the owner's wallet), web |
+| `decimals()` | `0x313ce567` | guard valuation |
+| `transfer(address,uint256)` / `transferFrom(address,address,uint256)` / `approve(address,uint256)` | `0xa9059cbb` / `0x23b872dd` / `0x095ea7b3` | guard, StockSwap, SpendPermissionManager |
+| `uiMultiplier()` / `newUIMultiplier()` / `effectiveAt()` | `0xa60bf13d` / `0xdc767007` / `0x97a4064f` | guard check 5, agent fact-check, web |
+| `toUIAmount(uint256)` / `fromUIAmount(uint256)` | `0x3248d4ff` / `0x65cd9b3c` | guard, StockSwap |
 | `isPaused(uint8)` | `0xbc61e733` | web (issuer pause banner) |
 | `policyId(bytes32)` / `isAuthorized(uint64,address)` / `policyExists(uint64)` | `0xdb3de624` / `0x55a1179e` / `0x330f5637` | agent diagnostics |
 | `isActivated(bytes32)` | `0xba87af80` | deploy script guard (`B20_ASSET` = `0xcdcc772f…f54c`) |
@@ -430,7 +436,34 @@ Real Coinbase feeds on Base **mainnet, read-only**, for the shadow panel and S3 
 | Smart wallets (Base Account) | ERC-5792 wallets take it as `capabilities: { dataSuffix: { value, optional: true } }` via `sendCalls` — see D6 |
 | Verify | last 16 bytes of calldata are `8021…` on Basescan, or builder-code-checker.vercel.app |
 
-### 6.5 Other
+### 6.5 Coinbase SpendPermissionManager (Spike S6; source coinbase/spend-permissions `e0004e6`)
+
+Address `0xf85210B21cC50302F477BA56686d2019dC9b67Ad` (Base Sepolia and Base mainnet, code verified Nov 19).
+
+```solidity
+struct SpendPermission {
+    address account;    // owner's Base Account
+    address spender;    // PangoGuard
+    address token;      // tUSDC (buy) or a stock (sell); ERC-20 or native 0xEeee…EEeE
+    uint160 allowance;  // per period
+    uint48  period;     // seconds, e.g. 86400
+    uint48  start;      // periods count from here, not from 00:00 UTC
+    uint48  end;
+    uint256 salt;
+    bytes   extraData;
+}
+function spend(SpendPermission memory spendPermission, uint160 value) external; // msg.sender must be spender; funds go to the spender
+function approve(SpendPermission calldata) external returns (bool);                 // msg.sender must be account
+function approveWithSignature(SpendPermission calldata, bytes calldata signature) external returns (bool);
+function revoke(SpendPermission calldata) external;                                 // msg.sender must be account
+function isValid(SpendPermission memory) external view returns (bool);
+```
+
+Errors the agent decoder must know: `InvalidSender(address sender, address expected)`, `UnauthorizedSpendPermission()`, `ExceededSpendPermission(uint256 value, uint256 allowance)`, `ZeroValue()`, `BeforeSpendPermissionStart(uint48,uint48)`, `AfterSpendPermissionEnd(uint48,uint48)`. Receipt texts: revoked → "The owner revoked the agent's spending permission"; exceeded → "Over the daily allowance the owner granted in their wallet".
+
+Requirements and limits: the manager must be an **owner of the user's Coinbase Smart Wallet** (it moves ERC-20s by making the wallet `approve` it, then `transferFrom`), so EOAs / MetaMask cannot use it. Coinbase smart wallet factory on Base Sepolia: `0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a` (verified onchain). Base's spend-permission docs page now points to Coinbase Developer Platform (blocked on the build network) — doc status unverified; contract and SDK are live.
+
+### 6.6 Other
 
 | Service | Use | Status |
 | --- | --- | --- |
@@ -457,7 +490,7 @@ Real Coinbase feeds on Base **mainnet, read-only**, for the shadow panel and S3 
 | `BUILDER_CODE` | agent suffix | no | Proposed |
 | `GAS_BUDGET_DAILY` | agent, default 12,000,000 | no | Proposed (SRD NFR-12) |
 | `ALLOWED_ORIGIN` | agent CORS | no | Proposed |
-| `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_VAULT_ADDRESS`, `NEXT_PUBLIC_AGENT_API_URL`, `NEXT_PUBLIC_BUILDER_CODE` | web (public values only) | no | SRD / Proposed |
+| `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_GUARD_ADDRESS`, `NEXT_PUBLIC_AGENT_API_URL`, `NEXT_PUBLIC_BUILDER_CODE` | web (public values only) | no | SRD / Proposed |
 
 `.env.example` gains the Proposed rows in Phase 1.
 
@@ -499,3 +532,13 @@ Found while writing this contract. **All eleven decided Nov 16, 2026 by Nalen518
 | D9 | Registering a Builder Code sends the agent address to `api.base.dev` (external, reachability from this network unchecked) | (a) register when the agent key exists, with approval; (b) dashboard code only | (a) |
 | D10 | Real-feed units (per share vs per raw token) still open (S3) | (a) keep "per UI share" for our mocks, revisit for FR-W10; (b) switch now | (a) |
 | D11 | SRD section 5 and this file both define the vault interface | (a) SRD section 5 points here, this file is the single source; (b) keep both in sync by hand | (a) |
+
+**Nov 19 idea review (decided by Nalen518, spike S6 passed):**
+
+| # | Change | Decided |
+| --- | --- | --- |
+| D12 | Custody: PangoVault → PangoGuard; funds stay in the owner's Base Account, pulled per trade via spend permissions, output returned in the same transaction; one guard for every account (supersedes D2) | PangoGuard |
+| D13 | Wallets: Base Account / Coinbase Smart Wallet only (no ERC-20-allowance path for injected wallets) | Base Account only |
+| D14 | Caps: the guard's UTC-day counters stay primary; the permission's per-period allowance is an outer ceiling | Guard counters + permission ceiling |
+| D15 | Corporate actions: block only ±`corporateActionWindow` (default 1 h) around `effectiveAt`, not the whole pending period | Window |
+| D16 | Weekend premium: kept as a reasoned risk; no mainnet measurement, no mainnet-fork demo | No mainnet |

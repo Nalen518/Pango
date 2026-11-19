@@ -1,6 +1,6 @@
 # Pango
 
-A research-to-portfolio agent for tokenized stocks on Base. PangoVault enforces every trade rule onchain: fair-value band, no trading through a stock split, share and spending caps, owner weight bounds. Testnet only (Base Sepolia).
+A research-to-portfolio agent for tokenized stocks on Base. PangoGuard enforces every trade rule onchain: fair-value band, no trading across a stock split's unit change, share and spending caps, owner weight bounds. Funds stay in the owner's own Base Account; the guard pulls each trade's input through a capped, revocable Base spend permission and returns the output in the same transaction. Testnet only (Base Sepolia). Status: design and spikes done (`docs/SPIKES.md`); contract, agent and app are in progress (`docs/CHECKLIST.md`).
 
 Spec: [docs/Pango-SRD.md](docs/Pango-SRD.md)
 

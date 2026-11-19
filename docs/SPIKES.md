@@ -6,6 +6,7 @@
 | S2 Vault holds B20 | PASS (local) · Sepolia tx hashes deferred | A contract can pull, hold and send our test stock; allowlists and issuer seizure behave as documented |
 | S3 Fair-value units | PARTIAL · rest deferred (API blocked, public RPC rate-limited) | Feeds read: 8 decimals, ~50 h weekend freeze; units and real-token checks need the Coinbase API |
 | S4 Revert decode | PASS (local) · Sepolia tx hash deferred | web3.py decodes custom errors from eth_call and can broadcast the reverting tx |
+| S6 Spend permissions | PASS (Sepolia fork) | A guard pulls USDC and a B20 stock from a Coinbase Smart Wallet via SpendPermissionManager, checks the account's agent, returns funds; allowance, revoke and isolation hold |
 | S5 Weight math | PASS | 55/55 states within 1 bps of exact math; full buy with target check 223k gas; split leaves weights unchanged |
 
 ## S1 — B20 asset token, scheduled split, read from a contract
@@ -199,3 +200,39 @@ Feed addresses from https://docs.base.org/build-on-base/integrate-defi/list-toke
 - NFR-12: size the budget with the measured numbers — about 245k gas per proof-mode revert transaction (≈ 50 reverts/day ≈ 12M gas).
 - FR-V12: state the formula with decimals: value18 = USDC × 1e12 + Σ `balanceOfUI × price8 × 1e10 / 10^decimals`; keep "feed per UI share" pending S3.
 - AT-05 / AT-17: the split-invariance property is proven for the math; the `ScheduleSplit` script must move the feed ÷10 at the effective time for it to hold on-chain.
+
+## S6 — Can PangoGuard pull funds from the user's own wallet through Base spend permissions?
+
+**Verdict:** PASS, 5/5, on a fork of Base Sepolia (`vm.createSelectFork`, nothing broadcast). Run: `cd spikes && base-forge test --match-path 's6-*/*' -vv`. Gate for the redesign "PangoVault → PangoGuard" (funds stay in the user's Base Account).
+
+**Facts used (all verified, Nov 19)**
+
+| Item | Value | How verified |
+| --- | --- | --- |
+| `SpendPermissionManager` | `0xf85210B21cC50302F477BA56686d2019dC9b67Ad` | coinbase/spend-permissions README; 12,610 bytes of code on Base Sepolia and Base mainnet |
+| Coinbase Smart Wallet factory | `0x0BA5ED0c6AA8c49038F819E587E2633c4A9F428a` | code on Base Sepolia (1,668 bytes); `implementation()` = `0x000100ab…9E72`; `getAddress(bytes[],uint256)` answers |
+| `SpendPermission` struct | `account, spender, token, uint160 allowance, uint48 period, uint48 start, uint48 end, uint256 salt, bytes extraData` | `src/SpendPermissionManager.sol:29-48` (commit `e0004e6`) |
+| `spend(SpendPermission, uint160 value)` | only callable by `spender`; moves `value` from `account` **to the spender** | source lines 420-426 |
+| ERC-20 path | manager makes the wallet `approve` it via `execute`, then `transferFrom(account, spender)` — so the manager must be a **wallet owner** | source lines 742-751 |
+| Web SDK | `@base-org/account` 2.6.0 exports `requestSpendPermission`, `fetchPermissions`, `prepareSpendCallData`, `requestRevoke`, … from `@base-org/account/spend-permission` | package `exports` + type files in `web/node_modules` |
+
+**What the tests do** (`spikes/s6-spend-permission/S6.t.sol`): create a real Coinbase Smart Wallet on the fork with owners `[user, SpendPermissionManager]`; mint tUSDC and a B20 test stock to it; `GuardProbe` (one guard, many accounts, each account sets its agent) pulls via `spend`, checks the balance arrived, and returns it to the wallet.
+
+| Test | Result |
+| --- | --- |
+| Buy path: 20 USDC through a 100 USDC/day permission | funds back in the wallet, guard holds 0; **~123k gas** for spend + return |
+| Sell path: 0.5 B20 stock through a stock permission | works with default B20 policies (manager is the `transferFrom` executor) |
+| Allowance ceiling: 60 then 50 within a day | second reverts `ExceededSpendPermission(110e6, 100e6)`; next day works |
+| Isolation: other account's agent | guard reverts `NotAgentOf`; calling the manager directly reverts `InvalidSender(agent, guard)` |
+| Revoke from the wallet | `isValid` false; next pull reverts `UnauthorizedSpendPermission` |
+
+**Surprises / limits**
+
+1. **Base Account / Coinbase Smart Wallet only.** The manager must be an owner of the wallet; MetaMask and other EOAs cannot use spend permissions (decided: Base Account only).
+2. Funds go to the **spender** (the guard), not to an arbitrary recipient — the guard holds them only inside one transaction and must deliver the swap output to the account itself.
+3. Permission periods count from `start`, not 00:00 UTC — the guard keeps its own UTC-day caps; the permission is an outer ceiling (decided).
+4. The approval in the test is `approve` called from the wallet; the real app uses the SDK's signed `requestSpendPermission` → `approveWithSignature`. The signed path is proven by Coinbase's own tests, not by us — check it in the web phase.
+5. Base's docs page for spend permissions now says the docs moved to Coinbase Developer Platform (blocked on this network). Contract and SDK are live; doc status unverified.
+6. Gas estimate for a full guarded buy: ~223k (S5 checks) + ~123k (permission spend + delivery) ≈ **350k**, not measured as one transaction yet.
+
+**Recommended SRD changes** (applied Nov 19): PangoVault becomes PangoGuard — one contract for all accounts, no deposits or withdrawals, the user grants a daily USDC permission (and stock permissions for sells), revokes from the wallet, and pauses per account; reads use the account's own balances; gas limit raised to 450k.
