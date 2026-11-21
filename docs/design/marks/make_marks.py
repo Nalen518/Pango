@@ -43,6 +43,10 @@ MARKS = {
     "owner": svg("Owner", f'<path d="M3 9Q8 6.5 13 9Q13.3 14.5 8 18Q2.7 14.5 3 9Z" fill="{BROWN}" {SW}/><path d="M13 12H21M18 12V15M21 12V14.5" fill="none" {SW}/>'),
     # paused: two scales standing, the agent is asleep
     "paused": svg("Paused", f'<path d="M5 4H10V20H5Z" fill="{BROWN_L}" {SW}/><path d="M14 4H19V20H14Z" fill="{BROWN_L}" {SW}/>'),
+    # permission revoked by the owner: a scale cut through
+    "revoked": svg("Permission revoked", f'<path d="{SCALE}" fill="#EAE3D4" {SW}/><path d="M5 19L19 4" fill="none" stroke="{INK}" stroke-width="2.6" stroke-linecap="round"/>'),
+    # daily allowance: a scale filled to a level (what is left today)
+    "allowance": svg("Allowance left today", f'<path d="{SCALE}" fill="{PAPER}" {SW}/><path d="M5.1 12H18.9Q17.2 17.6 12 21.5Q6.8 17.6 5.1 12Z" fill="{BROWN_L}"/><path d="{SCALE}" fill="none" {SW}/><path d="M5.5 12H18.5" fill="none" stroke="{INK}" stroke-width="1.6" stroke-linecap="round"/>'),
 }
 
 if __name__ == "__main__":
